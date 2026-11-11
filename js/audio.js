@@ -16,6 +16,12 @@ export function createAudio() {
   const spectrum = new Uint8Array(BANDS * 4);       // RGBA texture row
   const bands = new Float32Array(BANDS), prevBands = new Float32Array(BANDS);
   const onsets = { low: 0, mid: 0, high: 0 };
+  // seven slow bands, lows -> highs: what the worlds visibly follow.
+  // rise over ~1s, fall over ~3s, so the picture breathes with the music instead of flickering
+  const bands7 = new Float32Array(7);
+  const B7 = [0, 7, 14, 22, 31, 41, 52, 64];
+  // and a slow version of the main levels
+  const soft = { bass: 0, mid: 0, high: 0, level: 0 };
   let edges = null, bassAvg = .3, gain = 1;
   const lastHit = { low: 0, mid: 0, high: 0 };
   // an attack only counts if it clears a threshold, and each band rests briefly after firing
@@ -93,6 +99,11 @@ export function createAudio() {
       if (b < 14) { lo += v; oLo += flux; } else if (b < 40) { mi += v; oMi += flux; } else { hi += v; oHi += flux; }
     }
     lo /= 14; mi /= 26; hi /= 24;
+    for (let k = 0; k < 7; k++) {
+      let v = 0; for (let b = B7[k]; b < B7[k + 1]; b++) v += spectrum[b * 4] / 255;
+      v /= B7[k + 1] - B7[k];
+      bands7[k] = lerp(bands7[k], v, v > bands7[k] ? .05 : .018);
+    }
     onsets.low = live ? pick('low', oLo / 14, .045, 8, t) : 0;
     onsets.mid = live ? pick('mid', oMi / 26, .035, 10, t) : 0;
     onsets.high = live ? pick('high', oHi / 24, .03, 12, t) : 0;
@@ -103,10 +114,12 @@ export function createAudio() {
     lv.centroid = lerp(lv.centroid, den ? num / den / BANDS : .3, .05);
     bassAvg = lerp(bassAvg, lv.bass, .015);
     lv.beat = lerp(lv.beat, clamp((lv.bass - bassAvg - .035) * 6, 0, 1), .35);
+    soft.bass = lerp(soft.bass, lv.bass, .03); soft.mid = lerp(soft.mid, lv.mid, .03);
+    soft.high = lerp(soft.high, lv.high, .04); soft.level = lerp(soft.level, lv.level, .02);
     mood.energy = lerp(mood.energy, lv.level, .004);
     mood.brightness = lerp(mood.brightness, clamp(lv.centroid * 2.2, 0, 1), .004);
     return live;
   }
 
-  return { lv, mood, spectrum, onsets, update, element, startMic, startCapture, canCapture, ensure, get mode() { return mode; }, get el() { return el; } };
+  return { lv, mood, spectrum, onsets, bands7, soft, update, element, startMic, startCapture, canCapture, ensure, get mode() { return mode; }, get el() { return el; } };
 }

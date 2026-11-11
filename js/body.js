@@ -14,8 +14,28 @@ export const MASK_W = 160, MASK_H = 120;
 const lerp = (a, b, k) => a + (b - a) * k;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
+// One Euro filter: very smooth when you're slow, still responsive when you move fast.
+// Tuned toward stability: the general form of you, not every tremor.
+function oneEuro(minCutoff = .6, beta = .35, dCutoff = 1) {
+  let x = null, dx = 0, lastT = 0;
+  const alpha = (cut, dt) => 1 / (1 + 1 / (2 * Math.PI * cut * dt));
+  return (v, t) => {
+    if (x === null) { x = v; lastT = t; return v; }
+    const dt = Math.max(1e-3, t - lastT); lastT = t;
+    const d = (v - x) / dt;
+    dx += alpha(dCutoff, dt) * (d - dx);
+    const cut = minCutoff + beta * Math.abs(dx);
+    x += alpha(cut, dt) * (v - x);
+    return x;
+  };
+}
+
+// limbs as soft capsules: [from, to, width as a fraction of shoulder width]
+const BONES = [[11, 13, .34], [13, 15, .28], [12, 14, .34], [14, 16, .28],
+  [23, 25, .44], [25, 27, .34], [24, 26, .44], [26, 28, .34], [0, 33, .3]];
+
 export function createBody() {
-  const hand = () => ({ x: .5, y: .5, vx: 0, vy: 0, speed: 0, str: 0, seen: 0 });
+  const hand = () => ({ x: .5, y: .5, vx: 0, vy: 0, speed: 0, str: 0, seen: 0, stillT: 0 });
   const S = {
     source: 'none',
     hands: [hand(), hand()],
@@ -28,6 +48,9 @@ export function createBody() {
   };
   const cur = new Float32Array(MASK_W * MASK_H), soft = new Float32Array(MASK_W * MASK_H), tmp = new Float32Array(MASK_W * MASK_H);
 
+  const filt = Array.from({ length: 34 }, () => [oneEuro(), oneEuro(), oneEuro(1, 0)]);
+  const sk = document.createElement('canvas'); sk.width = MASK_W; sk.height = MASK_H;
+  const skx = sk.getContext('2d', { willReadFrequently: true });
   let video = null, landmarker = null, lastVideoT = -1, prevLm = null, prevLmT = 0;
   let diffCtx = null, prevFrame = null;
   let rawMotion = 0, pointerT = 0, charged = false;
@@ -75,7 +98,7 @@ export function createBody() {
     try {
       const { FilesetResolver, PoseLandmarker } = await import(MP_URL);
       const files = await FilesetResolver.forVisionTasks(MP_WASM);
-      const opts = d => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate: d }, runningMode: 'VIDEO', numPoses: 1, outputSegmentationMasks: true });
+      const opts = d => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate: d }, runningMode: 'VIDEO', numPoses: 1, outputSegmentationMasks: false });
       try { landmarker = await PoseLandmarker.createFromOptions(files, opts('GPU')); }
       catch { landmarker = await PoseLandmarker.createFromOptions(files, opts('CPU')); }
       S.source = 'pose';
@@ -96,14 +119,14 @@ export function createBody() {
         const fx = clamp((MASK_W - 1 - x + .5) / MASK_W * sw - .5, 0, sw - 1), x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
         const v = lerp(lerp(src[y0 * sw + x0], src[y0 * sw + x1], tx), lerp(src[y1 * sw + x0], src[y1 * sw + x1], tx), ty);
         const i = y * MASK_W + x;
-        cur[i] = lerp(cur[i], clamp(v * gain, 0, 1), .5);
+        cur[i] = lerp(cur[i], clamp(v * gain, 0, 1), .15);
       }
     }
     finishMask();
   }
   function finishMask() {
     // soft copy: two box-blur passes (horizontal then vertical), radius 4
-    const R = 4;
+    const R = 5;
     for (let y = 0; y < MASK_H; y++) {
       let s = 0; const row = y * MASK_W;
       for (let x = -R; x <= R; x++) s += cur[row + clamp(x, 0, MASK_W - 1)];
@@ -131,25 +154,76 @@ export function createBody() {
     S.maskDirty = true;
   }
 
+  // ---------- the form: torso, head and limbs from smoothed landmarks ----------
+  function drawForm(lm) {
+    const X = p => (p.x - .5) * S.camMap[0] * MASK_W + MASK_W / 2;          // screen -> mask pixels
+    const Y = p => (1 - ((p.y - .5) * S.camMap[1] + .5)) * MASK_H;           // canvas row 0 = top
+    const sw = Math.hypot(X(lm[11]) - X(lm[12]), Y(lm[11]) - Y(lm[12])) || 10;
+    skx.clearRect(0, 0, MASK_W, MASK_H);
+    skx.fillStyle = skx.strokeStyle = '#fff'; skx.lineCap = 'round'; skx.lineJoin = 'round';
+    const ok = (...i) => i.every(k => lm[k].v > .5);
+    // torso: shoulders and hips, slightly widened
+    if (ok(11, 12)) {
+      const hipsOK = ok(23, 24);
+      const pts = hipsOK ? [11, 12, 24, 23] : [11, 12];
+      skx.beginPath();
+      const cx = pts.reduce((a, k) => a + X(lm[k]), 0) / pts.length, cy = pts.reduce((a, k) => a + Y(lm[k]), 0) / pts.length;
+      if (hipsOK) {
+        pts.forEach((k, j) => { const x = cx + (X(lm[k]) - cx) * 1.12, y = cy + (Y(lm[k]) - cy) * 1.04; j ? skx.lineTo(x, y) : skx.moveTo(x, y); });
+        skx.closePath(); skx.lineWidth = sw * .3; skx.fill(); skx.stroke();
+      } else {
+        // only shoulders visible: a torso falling off the bottom of the frame
+        const x1 = X(lm[11]), x2 = X(lm[12]), y1 = Y(lm[11]), y2 = Y(lm[12]);
+        skx.moveTo(x1, y1); skx.lineTo(x2, y2); skx.lineTo(x2, MASK_H + 5); skx.lineTo(x1, MASK_H + 5); skx.closePath(); skx.fill();
+      }
+    }
+    for (const [a, b, w] of BONES) {
+      if (!ok(a, b)) continue;
+      skx.lineWidth = sw * w; skx.beginPath(); skx.moveTo(X(lm[a]), Y(lm[a])); skx.lineTo(X(lm[b]), Y(lm[b])); skx.stroke();
+    }
+    // head: centred between the ears (more stable than the nose)
+    if (ok(0)) {
+      const hx = ok(7, 8) ? (X(lm[7]) + X(lm[8])) / 2 : X(lm[0]), hy = ok(7, 8) ? (Y(lm[7]) + Y(lm[8])) / 2 : Y(lm[0]);
+      skx.beginPath(); skx.ellipse(hx, hy, sw * .3, sw * .38, 0, 0, Math.PI * 2); skx.fill();
+    }
+    // hands: soft palms
+    for (const k of [15, 16]) if (ok(k)) { skx.beginPath(); skx.arc(X(lm[k]), Y(lm[k]), sw * .17, 0, Math.PI * 2); skx.fill(); }
+    const d = skx.getImageData(0, 0, MASK_W, MASK_H).data;
+    for (let y = 0; y < MASK_H; y++) for (let x = 0; x < MASK_W; x++) {
+      const i = y * MASK_W + x, v = d[((MASK_H - 1 - y) * MASK_W + x) * 4] / 255;
+      cur[i] = lerp(cur[i], v, .35);
+    }
+    finishMask();
+  }
+
   // ---------- pose ----------
   const KEY = [0, 11, 12, 13, 14, 15, 16, 23, 24];
   function readPose(now) {
     if (!landmarker || video.readyState < 2 || video.currentTime === lastVideoT) return;
     lastVideoT = video.currentTime;
     const res = landmarker.detectForVideo(video, now);
-    const lm = res.landmarks && res.landmarks[0];
-    const mk = res.segmentationMasks && res.segmentationMasks[0];
-    if (mk) { ingestMask(mk.getAsFloat32Array(), mk.width, mk.height); }
-    else { cur.fill(0); finishMask(); }
+    const raw = res.landmarks && res.landmarks[0];
     res.close?.();
-    if (!lm) { S.body.presence = lerp(S.body.presence, 0, .1); S.hands.forEach(h => h.str *= .9); prevLm = null; return; }
-    // mirrored (selfie), y up, mapped onto the screen the same way the mask is
-    const P = i => { const [x, y] = toScreen(1 - lm[i].x, 1 - lm[i].y); return { x, y, v: lm[i].visibility ?? 1 }; };
+    if (!raw) {
+      // nobody in view: let the form fade gently instead of vanishing
+      S.body.presence = lerp(S.body.presence, 0, .05); S.hands.forEach(h => h.str *= .92); prevLm = null;
+      for (let i = 0; i < cur.length; i++) cur[i] *= .93;
+      finishMask(); return;
+    }
+    // smooth every landmark (in screen space), plus a synthetic neck point (33)
+    const ts = now / 1000;
+    const lm = raw.map((p, i) => {
+      const [sx, sy] = toScreen(1 - p.x, 1 - p.y), f = filt[i];
+      return { x: f[0](sx, ts), y: f[1](sy, ts), v: f[2](p.visibility ?? 1, ts) };
+    });
+    lm[33] = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2, v: Math.min(lm[11].v, lm[12].v) };
+    drawForm(lm);
+    const P = i => lm[i];
     const dt = prevLm ? Math.max(.016, (now - prevLmT) / 1000) : 0;
     if (prevLm) {
       let s = 0;
       for (const i of KEY) s += Math.hypot(lm[i].x - prevLm[i].x, lm[i].y - prevLm[i].y);
-      rawMotion = Math.max(rawMotion, clamp(s / KEY.length / dt / .9, 0, 1));
+      rawMotion = Math.max(rawMotion, clamp(s / KEY.length / dt / .7, 0, 1));
     }
     prevLm = lm.map(p => ({ x: p.x, y: p.y })); prevLmT = now;
 
@@ -164,10 +238,11 @@ export function createBody() {
       const a = P(w), b = P(f), h = S.hands[k];
       if (a.v < .4) { h.str *= .85; return; }
       const x = (a.x * 2 + b.x) / 3, y = (a.y * 2 + b.y) / 3;
-      const nx = lerp(h.x, x, .45), ny = lerp(h.y, y, .45);
+      const nx = lerp(h.x, x, .6), ny = lerp(h.y, y, .6);
       const sp = dt ? Math.hypot(nx - h.x, ny - h.y) / dt : 0;
       h.vx = nx - h.x; h.vy = ny - h.y; h.x = nx; h.y = ny; h.seen = now;
       h.speed = lerp(h.speed, sp, .4);
+      h.stillT = h.speed < .12 ? h.stillT + dt : 0;          // how long this hand has rested
       h.str = lerp(h.str, clamp(.35 + h.speed * .5, 0, 1), .3);
       rise += clamp((a.y - shoulderY) / .25, 0, 1);
     });
@@ -224,5 +299,6 @@ export function createBody() {
     if (S.source !== 'pose') { S.rise *= .98; S.openness *= .98; }
   }
 
-  return { state: S, update, startCamera, get video() { return video; } };
+  // testForm: draw the form from given landmarks (screen space), for testing without a camera
+  return { state: S, update, startCamera, testForm: lm => { S.maskOn = true; drawForm(lm); }, get video() { return video; } };
 }
