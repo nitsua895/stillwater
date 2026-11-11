@@ -53,8 +53,9 @@ function setWorld(i, label, sub) {
   titleEl.innerHTML = '';
   titleEl.append(label || WORLDS[i].name);
   const small = document.createElement('small'); small.textContent = sub || WORLDS[i].sub; titleEl.append(small);
+  const hint = document.createElement('em'); hint.textContent = WORLDS[i].hint; titleEl.append(hint);
   titleEl.style.opacity = 1;
-  clearTimeout(titleTimer); titleTimer = setTimeout(() => titleEl.style.opacity = 0, 5000);
+  clearTimeout(titleTimer); titleTimer = setTimeout(() => titleEl.style.opacity = 0, 7000);
 }
 WORLDS.forEach((w, i) => {
   const b = document.createElement('button'); b.textContent = `${i + 1} ${w.name}`;
@@ -180,53 +181,58 @@ const ui = $('ui'); let idle;
 function wake() { ui.classList.remove('hide'); document.body.classList.remove('nocursor'); clearTimeout(idle); idle = setTimeout(() => { if (!panel.classList.contains('show')) { ui.classList.add('hide'); document.body.classList.add('nocursor'); } }, 6000); }
 ['pointermove', 'pointerdown', 'keydown'].forEach(ev => addEventListener(ev, wake)); wake();
 
-// ---------- physics sources: how sound, hands and body push the sheet ----------
-// Every world gets energy from the music in its own way. Sustained sound makes
-// slow swells; attacks (onsets) drop sharp ripples that travel and interfere.
+// ---------- physics: how sound, hands and body move the sheet ----------
+// Calm by design: the music feeds slow, broad swells from its low end (no
+// random splashes); your hands and body add gentle wakes and currents.
 function sources(world, t) {
-  const A = audio.lv, O = audio.onsets, S = body.state, src = [];
+  const A = audio.soft, S = body.state, src = [];
   const ASP = W / H;
   const hands = S.hands.filter(h => h.str > .08);
+  const wake = h => h.str * Math.min(h.speed, 2) * Math.sin(t * 3.5);
   if (world === 0) {
-    // swells roll in from the far sea on the low end
-    for (let i = 0; i < 4; i++) src.push([.15 + i * .23, .9, .06, A.bass * .05 * Math.sin(t * 1.5 + i * 1.7)]);
-    if (O.high) src.push([rand(.25, .75), rand(.05, .6), .007, -O.high * .5]);   // drops on the surface
-    if (O.mid) src.push([rand(.3, .7), rand(.2, .7), .014, O.mid * .35]);
+    // lows: long swells rolling in from the far sea
+    for (let i = 0; i < 3; i++) src.push([.2 + i * .3, .92, .09, A.bass * .035 * Math.sin(t * .9 + i * 2.1)]);
     for (const h of hands) {
       const z = 1 + h.y * 3, x = (h.x - .5) * ASP * z;
-      src.push([x / 9 + .5, (z - .8) / 12, .012, h.str * Math.min(h.speed, 2.5) * .35 * Math.sin(t * 7)]);
+      src.push([x / 9 + .5, (z - .8) / 12, .02, wake(h) * .12]);
     }
-    if (S.body.presence > .3) src.push([(S.body.x - .5) * ASP / 9 + .5, .025, .02, S.motion * .4 * Math.sin(t * 5)]);
-    return src;
-  }
-  if (world === 1) {
-    const bx = Math.sin(t * .06) * .12 + (S.body.x - .5) * ASP * .35 * S.body.presence;
-    src.push([bx / ASP + .5, .44 + S.rise * .08, .02, A.bass * .2 * Math.sin(t * 3) + O.low * .5]);
-    if (O.mid) src.push([bx / ASP + .5 + rand(-.05, .05), rand(.5, .95), .01, O.mid * .4]);
+  } else if (world === 1) {
+    const bx = Math.sin(t * .04) * .12 + (S.body.x - .5) * ASP * .35 * S.body.presence;
+    src.push([bx / ASP + .5, .44, .05, A.bass * .05 * Math.sin(t * 1.4)]);
   } else if (world === 2) {
-    src.push([.5, .04, .1, A.bass * .12 * Math.sin(t * 1.3)]);                          // deep thrum
-    if (O.high) src.push([rand(.1, .9), rand(.75, .98), .008, O.high * .6]);       // drips from the surface
-    if (O.mid) src.push([rand(.2, .8), rand(.3, .8), .015, O.mid * .4]);
-  } else if (world === 3) {
-    if (O.low) src.push([rand(.15, .85), rand(.2, .8), .02, O.low * .5]);           // a pane is struck
-    if (O.high) src.push([rand(.1, .9), rand(.1, .9), .007, O.high * .3]);
-    src.push([.5, .5, .08, A.bass * .05 * Math.sin(t * 2)]);
-  } else {
+    src.push([.5, 1.0, .25, A.bass * .03 * Math.sin(t * .7)]);           // slow swell from the surface
+    for (const h of hands) src.push([h.x, h.y, .03, wake(h) * .08]);      // hands stir currents
+  } else if (world === 4) {
     const c = S.body.presence > .3 ? [S.body.x, .5 + (S.body.y - .5) * .5] : [.5, .48];
-    src.push([c[0], c[1], .04, A.bass * .15 * Math.sin(t * 2.4) + O.low * .4]);
-    if (O.high) { const a = rand(0, 6.28), r = rand(.08, .2); src.push([c[0] + Math.cos(a) * r / ASP, c[1] + Math.sin(a) * r, .008, O.high * .4]); }
+    src.push([c[0], c[1], .06, A.bass * .05 * Math.sin(t * 1.2)]);
+    for (const h of hands) src.push([h.x, h.y, .025, wake(h) * .06]);
   }
-  for (const h of hands) src.push([h.x, h.y, .014, h.str * Math.min(h.speed, 2.5) * .3 * Math.sin(t * 7)]);
   return src;
 }
-// how each world's sheet behaves: damping, and whether your body blocks / shoves it
+// damping, how hard your moving body pushes, whether it blocks waves, and wave speed (steps/frame)
 const PHYS = [
-  { damp: .992, push: 0, obstacle: 0 },      // tide: the sea is its own plane; you're on the shore
-  { damp: .975, push: .6, obstacle: 0 },     // lightwell: air, quick to settle
-  { damp: .99, push: 1.2, obstacle: .9 },    // undertow: water flows around you and you shove it
-  { damp: .985, push: .8, obstacle: .6 },    // prism: glass rings and reflects off your window
-  { damp: .978, push: .7, obstacle: .3 },    // bloom: a soft membrane
+  { damp: .992, push: 0, obstacle: 0, iters: 2 },     // tide: the sea is its own plane, you're on the shore
+  { damp: .97, push: .2, obstacle: 0, iters: 1 },     // lightwell: air, settles quickly
+  { damp: .985, push: .35, obstacle: .7, iters: 1 },  // undertow: water moves slowly around you
+  { damp: .97, push: 0, obstacle: 0, iters: 1 },      // prism: no sheet
+  { damp: .975, push: .25, obstacle: .3, iters: 1 },  // bloom: a soft membrane
 ];
+
+// ---------- Bloom: rest a hand somewhere to plant a flower there ----------
+let flowers = [];
+const flowerArr = new Float32Array(32);
+function tendFlowers(dt) {
+  const S = body.state;
+  if (cur === 4) for (const h of S.hands) {
+    if (h.str < .2 || h.stillT < 1.2) continue;
+    const near = flowers.some(f => Math.hypot((f.x - h.x) * W / H, f.y - h.y) < .07);
+    if (!near) { flowers.push({ x: h.x, y: h.y, g: 0, hue: Math.random(), age: 0 }); h.stillT = -2; }
+  }
+  for (const f of flowers) { f.age += dt; f.g = Math.min(1, f.age / 5) * (f.age > 70 ? Math.max(0, 1 - (f.age - 70) / 10) : 1); }
+  flowers = flowers.filter(f => f.age < 80).slice(-8);
+  flowerArr.fill(0);
+  flowers.forEach((f, i) => flowerArr.set([f.x, f.y, f.g, f.hue], i * 4));
+}
 
 // ---------- loop ----------
 const dbg = $('debug');
@@ -256,7 +262,7 @@ function frame(now) {
   // physics
   if (sim) {
     const P = PHYS[cur];
-    sim.step(sources(cur, t), { maskTex, maskOn: S.maskOn && cur !== 0, camMap: S.camMap, maskPush: P.push, obstacle: P.obstacle, damp: P.damp, aspect: cur === 0 ? 1.5 : W / H });
+    sim.step(sources(cur, t), { maskTex, maskOn: S.maskOn && cur !== 0, camMap: S.camMap, maskPush: P.push, obstacle: P.obstacle, damp: cur === 0 ? P.damp + S.stillness * .006 : P.damp, aspect: cur === 0 ? 1.5 : W / H }, P.iters);
   }
 
   // world
@@ -265,8 +271,11 @@ function frame(now) {
   gl.useProgram(W_.p);
   gl.uniform2f(U.uRes, glc.width, glc.height);
   gl.uniform1f(U.uTime, t % 3600);
-  gl.uniform4f(U.uAudio, A.bass, A.mid, A.high, A.level);
-  gl.uniform1f(U.uBeat, A.beat);
+  const SA = audio.soft;
+  gl.uniform4f(U.uAudio, SA.bass, SA.mid, SA.high, SA.level);
+  gl.uniform1fv(U.uBands7, audio.bands7);
+  tendFlowers(dt);
+  gl.uniform4fv(U.uFlowers, flowerArr); gl.uniform1i(U.uNFlowers, flowers.length);
   const h0 = S.hands[0], h1 = S.hands[1];
   gl.uniform3f(U.uH0, h0.x, h0.y, h0.str > .03 ? h0.str : 0);
   gl.uniform3f(U.uH1, h1.x, h1.y, h1.str > .03 ? h1.str : 0);
@@ -279,11 +288,10 @@ function frame(now) {
   gl.uniform2f(U.uCamMap, S.camMap[0], S.camMap[1]);
   gl.uniform2f(U.uSimTexel, sim ? 1 / sim.W : 0, sim ? 1 / sim.H : 0);
   gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, sim ? sim.tex : zeroTex); gl.uniform1i(U.uSim, 0);
-  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, specTex); gl.uniform1i(U.uSpec, 2);
   gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, maskTex); gl.uniform1i(U.uMask, 3);
   drawQuad(gl);
 
-  particles.step(cur, S, A, t);
+  particles.step(cur, S, audio, t);
 
   const [r, g, b] = WORLD_TINT[cur];
   lights.update(now, { type: 'light', r, g, b, brightness: clamp(.35 + A.level * .5 + S.stillness * .15 + A.beat * .2, 0, 1), world: WORLDS[cur].id, beat: A.beat, stillness: S.stillness });
@@ -298,5 +306,6 @@ function frame(now) {
   }
   requestAnimationFrame(frame);
 }
+if (new URLSearchParams(location.search).has('test')) window.__sw = { body, setWorld, skipFade: () => { fade = 1; } };
 setWorld(0);
 requestAnimationFrame(frame);

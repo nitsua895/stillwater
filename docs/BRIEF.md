@@ -42,6 +42,22 @@ camera at all, the mouse or a finger acts as one hand.
 | 4 | **Prism** | stained light, fracture and healing | motion fractures the cells; stillness turns the edges gold |
 | 5 | **Bloom** | garden, unfolding, return | stillness and open arms open the flower; seeds drift from the hands |
 
+## What each world listens to (v3)
+Each world has a few slow, readable links to the music, plus its own way of answering your hands and your stillness. There's no shared sparkle effect or glow ring any more.
+
+| World | Music → picture | Hands | Stillness |
+|---|---|---|---|
+| **Tide** | lows → swell height · mids → warmth of the dawn · highs → sun glints on the water | raise your arms to lift the sun; hands leave gentle wakes | the sea smooths to glass |
+| **Lightwell** | lows → the orb breathes · mids → beam brightness · highs → dust twinkles | bring your hands together to hold the orb between them; dust drifts toward your hands | you fill with light |
+| **Undertow** | lows → glow from the deep · mids → caustic light · highs → bubbles | moving hands stir currents and release bubbles | a shaft of light comes down onto you |
+| **Prism** | soft rainbows on a warm wall; in each, 7 colours = 7 bands (red = lows → violet = highs) | raise or lower your hands to turn the rainbows | each rainbow gathers back into white light |
+| **Bloom** | petal rings = bands (outer = lows → inner = highs) · highs → pollen | rest a hand for ~1 s to plant a flower there; moving hands shed petals | the bloom opens and blossoms open on you |
+
+The music follows a slow envelope: it rises over about 1 s and falls over about 3 s, so the picture breathes with the music instead of flickering.
+The physics is fed only by slow swells from the low end and by your movement; there are no random splashes.
+
+**Your body** is drawn from smoothed skeleton points (a One Euro filter on each landmark) as a soft, general form: torso, head and limbs as rounded shapes. It's stable rather than pixel-exact.
+
 ## Choosing the world
 - **By track (MVP):** load the album files. Each filename is matched against keywords in `js/tracks.js` (for example *Undertow* → Undertow, *Lightkeeper* → Lightwell, *Bloom* → Bloom).
 - **Manual:** keys `1`–`5` or the buttons.
