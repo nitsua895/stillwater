@@ -95,6 +95,17 @@ async function startMic() {
   } catch { say('Couldn\'t start the mic. Allow microphone access for this page.'); }
 }
 $('mic').onclick = startMic;
+if (audio.canCapture) $('tab').style.display = '';
+$('tab').onclick = async () => {
+  try {
+    await audio.startCapture(); $('tab').classList.add('on');
+    say('Listening to that tab directly. Keep the music tab open.');
+  } catch (e) {
+    say(e.message === 'noaudio'
+      ? 'No sound came through. Pick a tab (e.g. open.spotify.com) and switch on "Share tab audio", or share the whole screen with "Share system audio".'
+      : 'Audio capture was cancelled.');
+  }
+};
 $('cam').onclick = async () => {
   try { await body.startCamera(say); $('cam').classList.add('on'); }
   catch { say('Couldn\'t start the camera. Allow camera access for this page.'); }

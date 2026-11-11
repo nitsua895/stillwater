@@ -48,8 +48,24 @@ export function createAudio() {
     mode = 'mic';
   }
 
+  // Desktop browsers only: capture a tab's or the whole system's sound directly
+  // (e.g. Spotify's web player in another tab). Clean signal, no room noise.
+  async function startCapture() {
+    ensure();
+    const s = await navigator.mediaDevices.getDisplayMedia({
+      video: true, systemAudio: 'include', selfBrowserSurface: 'exclude',
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+    if (!s.getAudioTracks().length) { s.getTracks().forEach(t => t.stop()); throw new Error('noaudio'); }
+    ctx.createMediaStreamSource(new MediaStream(s.getAudioTracks())).connect(analyser);
+    s.getAudioTracks()[0].addEventListener('ended', () => { if (mode === 'capture') mode = 'idle'; });
+    mode = 'capture';
+  }
+  const canCapture = !!navigator.mediaDevices?.getDisplayMedia && !/iPad|iPhone|iPod|Android/i.test(navigator.userAgent)
+    && !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
   function update(t) {
-    const live = analyser && (mode === 'mic' || (mode === 'file' && el && !el.paused));
+    const live = analyser && (mode === 'mic' || mode === 'capture' || (mode === 'file' && el && !el.paused));
     if (live) {
       analyser.getByteFrequencyData(freq);
       let peak = 0;
@@ -92,5 +108,5 @@ export function createAudio() {
     return live;
   }
 
-  return { lv, mood, spectrum, onsets, update, element, startMic, ensure, get mode() { return mode; }, get el() { return el; } };
+  return { lv, mood, spectrum, onsets, update, element, startMic, startCapture, canCapture, ensure, get mode() { return mode; }, get el() { return el; } };
 }
