@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Stillwater">
+<meta name="theme-color" content="#1a1a22">
+<title>Stillwater — Zen Visualizer Prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,400&family=Inter:wght@300;400&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#1a1a22;font-family:Inter,system-ui,sans-serif;color:#fff}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  #ui{position:fixed;left:0;right:0;bottom:0;padding:18px calc(18px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left));display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+      background:linear-gradient(transparent,rgba(0,0,0,.38));transition:opacity .9s}
+  #ui.hide{opacity:0;pointer-events:none}
+  button,label.btn{font:300 13px Inter,sans-serif;color:#fff;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);
+      border-radius:999px;padding:8px 14px;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+  button.on{background:rgba(255,255,255,.34)}
+  .sep{width:1px;height:22px;background:rgba(255,255,255,.25);margin:0 4px}
+  #status{font-size:12px;opacity:.8;flex-basis:100%;min-height:15px}
+  #title{position:fixed;top:26px;left:0;right:0;text-align:center;font:italic 400 30px 'Cormorant Garamond',Georgia,serif;
+      letter-spacing:.05em;opacity:0;transition:opacity 2.2s;pointer-events:none;text-shadow:0 1px 14px rgba(0,0,0,.25)}
+  #title small{display:block;font:300 12px Inter,sans-serif;letter-spacing:.2em;text-transform:uppercase;opacity:.75;margin-top:6px}
+  input[type=file]{display:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"></div>
+<div id="ui">
+  <div id="scenes" style="display:flex;gap:8px;flex-wrap:wrap"></div>
+  <span class="sep"></span>
+  <label class="btn">Load album<input id="file" type="file" accept="audio/*" multiple></label>
+  <button id="mic">Listen (mic)</button>
+  <button id="cam">Camera</button>
+  <button id="drift" class="on">Auto-drift</button>
+  <button id="fs">Fullscreen</button>
+  <div id="status">Move your cursor or finger across the screen to stir it. Load the album to make it breathe with the music.</div>
+</div>
+
+<script>
+// ---------- setup ----------
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);resize();
+const lerp=(a,b,k)=>a+(b-a)*k, clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), rand=(a,b)=>a+Math.random()*(b-a);
+const hex=h=>{const n=parseInt(h.slice(1),16);return[n>>16,(n>>8)&255,n&255]};
+const mix=(c1,c2,k)=>c1.map((v,i)=>lerp(v,c2[i],k));
+const rgba=(c,a=1)=>`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+const statusEl=document.getElementById('status');
+const say=m=>statusEl.textContent=m;
+
+// ---------- body / motion field (camera, mouse, touch all feed this) ----------
+const GW=48,GH=36,field=new Float32Array(GW*GH);
+let energy=0,cx=.5,cy=.5;
+function addField(px,py,amt,rad=3){
+  const gx=px/W*GW,gy=py/H*GH;
+  for(let y=Math.max(0,gy-rad|0);y<=Math.min(GH-1,gy+rad|0);y++)
+    for(let x=Math.max(0,gx-rad|0);x<=Math.min(GW-1,gx+rad|0);x++){
+      const d=Math.hypot(x-gx,y-gy)/rad; if(d<1){const i=y*GW+x;field[i]=Math.min(1,field[i]+amt*(1-d));}
+    }
+}
+function fieldAt(x,y){return field[clamp(y/H*GH|0,0,GH-1)*GW+clamp(x/W*GW|0,0,GW-1)];}
+function updateField(){
+  let s=0,sx=0,sy=0;
+  for(let i=0;i<field.length;i++){field[i]*=.93;const v=field[i];s+=v;sx+=v*(i%GW);sy+=v*((i/GW)|0);}
+  energy=lerp(energy,clamp(s/70,0,1),.08);
+  if(s>.6){cx=lerp(cx,sx/s/GW,.06);cy=lerp(cy,sy/s/GH,.06);}
+}
+let lastPt=null;
+cv.addEventListener('pointermove',e=>{
+  const sp=lastPt?Math.hypot(e.clientX-lastPt[0],e.clientY-lastPt[1]):0;
+  addField(e.clientX,e.clientY,clamp(sp/40,0,.6)); lastPt=[e.clientX,e.clientY];
+});
+cv.addEventListener('pointerdown',e=>{addField(e.clientX,e.clientY,.8,4);lastPt=[e.clientX,e.clientY];});
+
+// camera: frame-differencing on a tiny mirrored image — stand-in for Kinect depth/skeleton
+let video=null,camCtx=null,prevFrame=null;
+async function startCam(){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user",width:{ideal:320},height:{ideal:240}},audio:false});
+    video=document.createElement('video');video.srcObject=s;video.muted=true;video.playsInline=true;await video.play();
+    const c=document.createElement('canvas');c.width=GW;c.height=GH;camCtx=c.getContext('2d',{willReadFrequently:true});
+    camBtn.classList.add('on');say('Camera on. Step back so it sees your whole body, then move slowly.');
+  }catch(e){say("Couldn't start the camera. Check that this page has camera permission (Settings → Safari → Camera on iPad).");}
+}
+function readCam(){
+  if(!video||video.readyState<2)return;
+  camCtx.save();camCtx.scale(-1,1);camCtx.drawImage(video,-GW,0,GW,GH);camCtx.restore();
+  const d=camCtx.getImageData(0,0,GW,GH).data,cur=new Float32Array(GW*GH);
+  for(let i=0;i<cur.length;i++)cur[i]=(d[i*4]+d[i*4+1]+d[i*4+2])/765;
+  if(prevFrame)for(let i=0;i<cur.length;i++){const df=Math.abs(cur[i]-prevFrame[i]);if(df>.05)field[i]=Math.min(1,field[i]+df*3.5);}
+  prevFrame=cur;
+}
+
+// ---------- audio ----------
+let actx=null,analyser=null,freq=null,audioEl=null,mode='idle',playlist=[],trackIdx=0;
+function ensureCtx(){
+  if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)();analyser=actx.createAnalyser();
+    analyser.fftSize=1024;analyser.smoothingTimeConstant=.82;freq=new Uint8Array(analyser.frequencyBinCount);}
+  if(actx.state==='suspended')actx.resume();
+}
+function playTrack(i){
+  trackIdx=(i+playlist.length)%playlist.length;
+  audioEl.src=URL.createObjectURL(playlist[trackIdx]);audioEl.play().catch(()=>say('Tap anywhere, then press play again.'));
+  const name=playlist[trackIdx].name.replace(/\.[^.]+$/,'').replace(/^\d+[\s.\-_]*/,'');
+  setScene(trackIdx%SCENES.length,name);
+}
+document.getElementById('file').addEventListener('change',e=>{
+  const files=[...e.target.files].sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+  if(!files.length)return;
+  ensureCtx();
+  if(!audioEl){audioEl=new Audio();const src=actx.createMediaElementSource(audioEl);
+    src.connect(analyser);src.connect(actx.destination);audioEl.addEventListener('ended',()=>playTrack(trackIdx+1));}
+  playlist=files;mode='file';playTrack(0);
+  say(`${files.length} track${files.length>1?'s':''} loaded. Each one gets its own movement. Space = pause, → = next track.`);
+});
+const micBtn=document.getElementById('mic');
+micBtn.onclick=async()=>{
+  try{ensureCtx();const s=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    actx.createMediaStreamSource(s).connect(analyser);mode='mic';micBtn.classList.add('on');
+    say('Listening to the room. Play the soundtrack from Spotify or your speakers.');}
+  catch(e){say("Couldn't start the mic. Check that this page has microphone permission, or load the album files instead.");}
+};
+const lv={bass:0,mid:0,high:0,beat:0};let bassAvg=.3;
+function band(a,b){let s=0;for(let i=a;i<b;i++)s+=freq[i];return s/(b-a)/255;}
+function readAudio(t){
+  let b,m,h;
+  const live=analyser&&(mode==='mic'||(mode==='file'&&audioEl&&!audioEl.paused));
+  if(live){analyser.getByteFrequencyData(freq);b=band(1,10);m=band(10,80);h=band(80,300);
+    if(mode==='mic'){b*=1.4;m*=1.6;h*=2;}}
+  else{b=.32+.14*Math.sin(t*.55);m=.28+.1*Math.sin(t*.37+1);h=.18+.08*Math.sin(t*1.3);}
+  lv.bass=lerp(lv.bass,b,.12);lv.mid=lerp(lv.mid,m,.1);lv.high=lerp(lv.high,h,.15);
+  bassAvg=lerp(bassAvg,lv.bass,.015);lv.beat=lerp(lv.beat,clamp((lv.bass-bassAvg-.04)*5,0,1),.3);
+}
+
+// ---------- scenes ("movements") ----------
+const SCENES=[
+ { name:'Shore', sub:'dawn · tide · breath',
+   bg:['#f6d6c2','#7fb6b8'], c:['#fbe9d9','#e8a98f','#5f9ea3','#3d6f7d'],
+   draw(t,k){
+     const sx=lerp(W*.5,cx*W,energy*.7),sy=H*(.3-lv.bass*.04),r=Math.min(W,H)*(.1+lv.bass*.06);
+     let g=ctx.createRadialGradient(sx,sy,0,sx,sy,r*3.2);
+     g.addColorStop(0,rgba(hex('#fff3e4'),.9*k));g.addColorStop(.3,rgba(hex('#ffd2b0'),.45*k));g.addColorStop(1,rgba(hex('#ffd2b0'),0));
+     ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+     for(let L=0;L<6;L++){
+       const yb=H*(.46+L*.095),amp=(10+L*7)*(.5+lv.bass*1.8),col=mix(hex(this.c[1]),hex(this.c[3]),L/5);
+       ctx.beginPath();ctx.moveTo(0,H);
+       for(let x=0;x<=W+12;x+=12){
+         const y=yb+Math.sin(x*.0035*(1+L*.35)+t*(.25+L*.07)+L*1.7)*amp+Math.sin(x*.012-t*.6+L)*amp*.25*(1+lv.high*2)-fieldAt(x,yb)*70;
+         ctx.lineTo(x,y);
+       }
+       ctx.lineTo(W,H);ctx.closePath();ctx.fillStyle=rgba(col,.32*k);ctx.fill();
+     }
+   }},
+ { name:'Floating Stones', sub:'drift · balance · weightless',
+   bg:['#d9cdf0','#f3c9d4'], c:['#fff7fb','#c7b4e6','#9a86c9','#e9a6b8'],
+   cubes:null,
+   draw(t,k){
+     if(!this.cubes)this.cubes=Array.from({length:16},(_,i)=>({x:rand(0,W),y:rand(H*.1,H*.9),s:rand(18,60),ph:rand(0,7),vx:rand(-.15,.15),vy:0}));
+     const pts=[];
+     for(const q of this.cubes){
+       const m=fieldAt(q.x,q.y);
+       if(m>.08){const dx=q.x-cx*W,dy=q.y-cy*H,d=Math.hypot(dx,dy)+1;q.vx+=dx/d*m*.6;q.vy+=dy/d*m*.6;}
+       q.vx*=.97;q.vy*=.97;q.x+=q.vx+Math.sin(t*.2+q.ph)*.15;q.y+=q.vy+Math.sin(t*.5+q.ph)*.25;
+       if(q.x<-80)q.x=W+80;if(q.x>W+80)q.x=-80;if(q.y<-80)q.y=H+80;if(q.y>H+80)q.y=-80;
+       pts.push(q);
+     }
+     pts.sort((a,b)=>a.s-b.s);
+     for(const q of pts){
+       const s=q.s*(1+lv.bass*.35+lv.beat*.15),y=q.y+Math.sin(t*.7+q.ph)*8;
+       const shadeT=rgba(hex(this.c[0]),.85*k),shadeL=rgba(hex(this.c[2]),.7*k),shadeR=rgba(hex(this.c[3]),.7*k);
+       const a=s*.87,b=s*.5;
+       ctx.beginPath();ctx.moveTo(q.x,y-s);ctx.lineTo(q.x+a,y-b);ctx.lineTo(q.x,y);ctx.lineTo(q.x-a,y-b);ctx.closePath();ctx.fillStyle=shadeT;ctx.fill();
+       ctx.beginPath();ctx.moveTo(q.x-a,y-b);ctx.lineTo(q.x,y);ctx.lineTo(q.x,y+s);ctx.lineTo(q.x-a,y+b);ctx.closePath();ctx.fillStyle=shadeL;ctx.fill();
+       ctx.beginPath();ctx.moveTo(q.x+a,y-b);ctx.lineTo(q.x,y);ctx.lineTo(q.x,y+s);ctx.lineTo(q.x+a,y+b);ctx.closePath();ctx.fillStyle=shadeR;ctx.fill();
+     }
+   }},
+ { name:'Lanterns', sub:'night · rise · glow',
+   bg:['#151a3a','#3a2d5c'], c:['#ffd89a','#ff9f7a','#9fd8ff','#c9a8ff'],
+   ps:[],
+   draw(t,k){
+     const rate=.6+energy*6+lv.beat*8+lv.mid*1.5;
+     for(let n=0;n<rate;n++){
+       if(Math.random()>rate-n)break;
+       let x=rand(0,W),y=H+10;
+       if(energy>.05&&Math.random()<.7){for(let tries=0;tries<12;tries++){const i=Math.random()*field.length|0;if(field[i]>.25){x=(i%GW+Math.random())/GW*W;y=(((i/GW)|0)+Math.random())/GH*H;break;}}}
+       this.ps.push({x,y,vy:-rand(.3,1.3),vx:rand(-.2,.2),r:rand(1.5,5),life:1,c:this.c[Math.random()*4|0],ph:rand(0,7)});
+     }
+     if(this.ps.length>500)this.ps.splice(0,this.ps.length-500);
+     ctx.globalCompositeOperation='lighter';
+     for(const p of this.ps){
+       p.x+=p.vx+Math.sin(t+p.ph)*.3;p.y+=p.vy*(1+lv.bass);p.life-=.0025;
+       const tw=.6+.4*Math.sin(t*3+p.ph)*(.5+lv.high*2),R=p.r*(2.5+lv.bass*3);
+       const g=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,R*3);const col=hex(p.c);
+       g.addColorStop(0,rgba(col,.9*k*p.life*tw));g.addColorStop(.25,rgba(col,.3*k*p.life*tw));g.addColorStop(1,rgba(col,0));
+       ctx.fillStyle=g;ctx.fillRect(p.x-R*3,p.y-R*3,R*6,R*6);
+     }
+     ctx.globalCompositeOperation='source-over';
+     this.ps=this.ps.filter(p=>p.life>0&&p.y>-40);
+   }},
+ { name:'Bloom', sub:'garden · unfold · return',
+   bg:['#e4ecc9','#8fbf9a'], c:['#fffbe8','#f4d27a','#e89b8e','#5e9a7d'],
+   draw(t,k){
+     const ox=lerp(W/2,cx*W,energy*.5),oy=lerp(H/2,cy*H,energy*.5),base=Math.min(W,H)*.09;
+     for(let r=5;r>=0;r--){
+       const n=6+r*3,len=base*(1+r*.55)*(.75+lv.bass*.7+lv.beat*.2),wid=len*.32,rot=t*(.04+lv.mid*.08)*(r%2?-1:1)+r*.4;
+       const col=hex(this.c[r%4]);
+       ctx.fillStyle=rgba(col,(.16+r*.02)*k);ctx.strokeStyle=rgba(hex('#ffffff'),.18*k);ctx.lineWidth=1;
+       for(let i=0;i<n;i++){
+         const a=rot+i/n*Math.PI*2,d=len*.55+r*base*.45;
+         ctx.save();ctx.translate(ox+Math.cos(a)*d,oy+Math.sin(a)*d);ctx.rotate(a);
+         ctx.beginPath();ctx.ellipse(0,0,len*.6,wid*(1+energy*.6),0,0,Math.PI*2);ctx.fill();ctx.stroke();ctx.restore();
+       }
+     }
+     const g=ctx.createRadialGradient(ox,oy,0,ox,oy,base*1.4);
+     g.addColorStop(0,rgba(hex('#fffbe8'),.95*k));g.addColorStop(1,rgba(hex('#f4d27a'),0));ctx.fillStyle=g;ctx.fillRect(ox-base*2,oy-base*2,base*4,base*4);
+   }},
+];
+
+let cur=0,prev=-1,fade=1,sceneStart=0;
+const titleEl=document.getElementById('title');let titleTimer;
+function setScene(i,label){
+  if(i!==cur){prev=cur;cur=i;fade=0;}
+  sceneStart=performance.now();
+  titleEl.innerHTML=`${label||SCENES[i].name}<small>${SCENES[i].sub}</small>`;titleEl.style.opacity=1;
+  clearTimeout(titleTimer);titleTimer=setTimeout(()=>titleEl.style.opacity=0,4500);
+  document.querySelectorAll('#scenes button').forEach((b,j)=>b.classList.toggle('on',j===i));
+}
+const sceneBox=document.getElementById('scenes');
+SCENES.forEach((s,i)=>{const b=document.createElement('button');b.textContent=s.name;b.onclick=()=>setScene(i);sceneBox.appendChild(b);});
+
+// ---------- controls ----------
+const camBtn=document.getElementById('cam');camBtn.onclick=startCam;
+let drift=true;const driftBtn=document.getElementById('drift');
+driftBtn.onclick=()=>{drift=!drift;driftBtn.classList.toggle('on',drift);};
+document.getElementById('fs').onclick=()=>{
+  const d=document,el=d.documentElement,isFs=d.fullscreenElement||d.webkitFullscreenElement;
+  const req=el.requestFullscreen||el.webkitRequestFullscreen,exit=d.exitFullscreen||d.webkitExitFullscreen;
+  try{
+    if(isFs){exit.call(d);return;}
+    if(!req)throw 0;
+    const r=req.call(el);if(r&&r.catch)r.catch(()=>say('For true fullscreen on iPad: Share → Add to Home Screen, then open Stillwater from the home screen.'));
+  }catch(e){say('For true fullscreen on iPad: Share → Add to Home Screen, then open Stillwater from the home screen.');}
+};
+addEventListener('keydown',e=>{
+  if(e.key>='1'&&e.key<=String(SCENES.length))setScene(+e.key-1);
+  else if(e.key==='f')document.getElementById('fs').click();
+  else if(e.key===' '&&audioEl){e.preventDefault();audioEl.paused?audioEl.play():audioEl.pause();}
+  else if(e.key==='ArrowRight'&&playlist.length)playTrack(trackIdx+1);
+  else if(e.key==='h')ui.classList.toggle('hide');
+});
+const ui=document.getElementById('ui');let idle;
+function wake(){ui.classList.remove('hide');clearTimeout(idle);idle=setTimeout(()=>ui.classList.add('hide'),5000);}
+['pointermove','pointerdown','keydown'].forEach(ev=>addEventListener(ev,wake));wake();
+
+// ---------- render loop ----------
+let last=performance.now();
+function frame(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;const t=now/1000;
+  readCam();updateField();readAudio(t);
+  fade=Math.min(1,fade+dt/5);
+  if(drift&&mode!=='file'&&now-sceneStart>180000)setScene((cur+1)%SCENES.length);
+  const A=SCENES[cur],B=prev>=0?SCENES[prev]:A,e=fade*fade*(3-2*fade);
+  const top=mix(hex(B.bg[0]),hex(A.bg[0]),e),bot=mix(hex(B.bg[1]),hex(A.bg[1]),e);
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,rgba(top));g.addColorStop(1,rgba(bot));
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  if(prev>=0&&e<1)B.draw(t,1-e);
+  A.draw(t,e);
+  // soft presence glow where the body is moving
+  if(energy>.02){const r=Math.min(W,H)*.35,gx=cx*W,gy=cy*H,gg=ctx.createRadialGradient(gx,gy,0,gx,gy,r);
+    gg.addColorStop(0,`rgba(255,255,255,${energy*.18})`);gg.addColorStop(1,'rgba(255,255,255,0)');ctx.fillStyle=gg;ctx.fillRect(0,0,W,H);}
+  const v=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.35,W/2,H/2,Math.max(W,H)*.75);
+  v.addColorStop(0,'rgba(0,0,0,0)');v.addColorStop(1,'rgba(0,0,0,.28)');ctx.fillStyle=v;ctx.fillRect(0,0,W,H);
+  requestAnimationFrame(frame);
+}
+setScene(0);requestAnimationFrame(frame);
+</script>
+</body>
+</html>
