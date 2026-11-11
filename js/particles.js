@@ -1,7 +1,6 @@
-// Small moving things, different in each world (none in Tide or Prism):
+// Small moving things, only in the two silhouette worlds:
 //   Lightwell  dust motes drift in the beam and gather toward your hands
 //   Undertow   bubbles rise from moving hands, and from the deep on high notes
-//   Bloom      petals fall from moving hands, slowly
 // Everything is slow and soft. Drawn additively over the shader.
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -27,7 +26,7 @@ export function createParticles(canvas) {
     } else if (world === 2) {
       if (ps.length < 160 && Math.random() < A.high * .6) ps.push(bubble(rand(0, W), H + 10, rand(1.5, 3.5)));
       for (const h of S.hands) if (live(h) && Math.random() < Math.min(h.speed, 1.5) * .5) ps.push(bubble(hx(h) + rand(-10, 10), hy(h), rand(1.5, 4)));
-    } else if (world === 4) {
+    } else if (false) {
       for (const h of S.hands) if (live(h) && ps.length < 140 && Math.random() < Math.min(h.speed, 1.5) * .35) {
         ps.push({ x: hx(h), y: hy(h), vx: rand(-.3, .3), vy: rand(-.2, .1), r: rand(3, 6), life: 1, decay: rand(.002, .004), c: PETAL[(Math.random() * 4) | 0], ph: rand(0, 6.28), rot: rand(0, 6.28), spin: rand(-.01, .01) });
       }

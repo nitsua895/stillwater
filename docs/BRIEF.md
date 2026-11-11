@@ -42,21 +42,23 @@ camera at all, the mouse or a finger acts as one hand.
 | 4 | **Prism** | stained light, fracture and healing | motion fractures the cells; stillness turns the edges gold |
 | 5 | **Bloom** | garden, unfolding, return | stillness and open arms open the flower; seeds drift from the hands |
 
-## What each world listens to (v4)
-Each world has a few slow, readable links to the music, plus its own way of answering your hands and your stillness. There's no shared sparkle effect or glow ring any more.
+## How the worlds respond (v5)
+**The principle:** for yoga and dance, the response has to come *from your body*, right where you are, the instant you move. Separate objects that react indirectly (crystals, flowers, a sun) felt disconnected, so three worlds are now a real-time **fluid simulation that your whole body stirs**:
 
-| World | Music → picture | Hands | Stillness |
-|---|---|---|---|
-| **Tide** | lows → swell height · mids → warmth of the dawn · highs → sun glints on the water | raise your arms to lift the sun; hands leave wakes (no silhouette) | the sea smooths to glass |
-| **Lightwell** | lows → the orb breathes · mids → beam brightness · highs → dust twinkles | bring your hands together to hold the orb between them; dust drifts toward your hands | you fill with light |
-| **Undertow** | lows → glow from the deep · mids → caustic light · highs → bubbles | moving hands stir currents and release bubbles | a shaft of light comes down onto you |
-| **Prism** | six hanging crystals throw rainbows; in each, 7 colours = 7 bands · each crystal grows with its band and turns with the mids · mids shift the hues · highs glint | slow hands gather the crystals toward you; quick sweeps push and spin them (no silhouette) | rainbows gather into white light |
-| **Bloom** | petal rings = bands · highs → pollen · musical attacks sprout flowers, the music grows and opens them | flowers sprout near your hands and along your outline; your hands brush them aside and they spring back (no silhouette) | the bloom and flowers open wider |
+- **Moving limbs** (hands, elbows, feet, knees, head) push the fluid the way they move and leave colour behind, so dancing leaves visible flow.
+- **The moving edge of your silhouette** pushes and paints too, so the whole body counts, not just tracked points.
+- **Holding a pose** makes your outline glow and that light slowly spreads, so yoga holds build something.
+- **The music:** the low end breathes outward from your centre, the highs add fine swirls, and louder passages make trails linger.
 
-The music follows a slow envelope: it rises over about 1 s and falls over about 3 s, so the picture breathes with the music instead of flickering.
-The physics is fed only by slow swells from the low end and by your movement; there are no random splashes.
+| World | Material | Music |
+|---|---|---|
+| **Silk** | warm, glowing ribbons with a satin sheen, on deep dusk | lows glow from below, highs add sheen and swirl |
+| **Spectrum** | glowing light on black | **the colour you paint is the music's colour right now**: whichever part of the sound is rising (lows red/orange → mids gold/green → highs blue/violet); with nothing standing out, it drifts slowly through the palette |
+| **Bloom** | watercolour ink on paper, each limb its own pigment | holding still lets the ink spread like a watercolour bloom |
+| **Lightwell** | your silhouette in a beam in space | lows = orb breathes · mids = beam · highs = dust; hands together hold the orb; stillness fills you with light |
+| **Undertow** | your silhouette underwater | lows = glow from the deep · mids = caustics · highs = bubbles; stillness brings a shaft of light |
 
-**Your body** is shown as a silhouette only in Lightwell and Undertow. It uses the camera's own cut-out, which is responsive, steadied with a noise floor and light smoothing (grows fast, shrinks slower). If cut-out isn't available it falls back to a skeleton-drawn form. In the other worlds your body isn't drawn: your hands and outline drive the physics instead.
+**Your body:** Lightwell and Undertow show the camera's own cut-out (responsive, steadied with a noise floor). In the fluid worlds your body isn't drawn directly: you see yourself through what you stir, and through the glowing outline when you hold still.
 
 ## Choosing the world
 - **By track (MVP):** load the album files. Each filename is matched against keywords in `js/tracks.js` (for example *Undertow* → Undertow, *Lightkeeper* → Lightwell, *Bloom* → Bloom).

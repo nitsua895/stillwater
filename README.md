@@ -3,7 +3,7 @@
 An immersive visualizer to move to: yoga, slow dance, stillness. It's built for a
 projector or big screen, listens to the music and follows your body through the webcam.
 
-- **Five original worlds:** Tide, Lightwell, Undertow, Prism, Bloom. Each crossfades into the next.
+- **Five original worlds:** Silk, Lightwell, Undertow, Spectrum, Bloom. Three are a real-time fluid your whole body stirs; two show your silhouette.
 - **Body:** MediaPipe Pose tracks both hands and your torso. Hands shed light, raised arms brighten the world, and **holding still for ~7 s blooms the world** and sends a ring of light out from you.
 - **Physics:** a real-time wave simulation on the GPU. Music feeds it: sustained lows make swells, and attacks (plucks, hits) drop ripples that travel and interfere. Your hands and your moving body push it too, and in the water worlds waves reflect off your silhouette. Each world lights the surface in 3D.
 - **You in the world:** the camera's full-body silhouette is drawn by each world. You're a dusk figure with a sunlit rim and a reflection in the sea, a shape lit by the beam that fills with light as you still, a diver in caustic light, a stained-glass window, or overgrown with leaves and blossoms.
@@ -35,7 +35,8 @@ The camera and mic only work on HTTPS or localhost.
 
 ## Code map
 - `js/main.js`: UI, main loop, and how sound, hands and body feed the physics (`sources()`, `PHYS`)
-- `js/sim.js`: GPU wave-equation simulation
+- `js/fluid.js`: GPU fluid (stable fluids) stirred by your body and the music (Silk, Spectrum, Bloom)
+- `js/sim.js`: GPU wave simulation (Lightwell, Undertow)
 - `js/shader.js`: the five worlds (one fragment shader)
 - `js/spotify.js`: Spotify now-playing (browser-only PKCE sign-in)
 - `js/gl.js`: WebGL2 helpers
