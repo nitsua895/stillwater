@@ -34,6 +34,9 @@ function oneEuro(minCutoff = .6, beta = .35, dCutoff = 1) {
 const BONES = [[11, 13, .34], [13, 15, .28], [12, 14, .34], [14, 16, .28],
   [23, 25, .44], [25, 27, .34], [24, 26, .44], [26, 28, .34], [0, 33, .3]];
 
+// body parts that stir the fluid: [landmark, part id] (0 hands, 1 elbows, 2 feet, 3 knees, 4 head)
+const PARTS = [[15, 0], [16, 0], [13, 1], [14, 1], [27, 2], [28, 2], [25, 3], [26, 3], [0, 4]];
+
 export function createBody() {
   const hand = () => ({ x: .5, y: .5, vx: 0, vy: 0, speed: 0, str: 0, seen: 0, stillT: 0 });
   const S = {
@@ -42,6 +45,8 @@ export function createBody() {
     body: { x: .5, y: .5, presence: 0 },
     motion: 0, stillness: 0, rise: 0, openness: 0, pulse: 0, rewards: 0,
     // silhouette: RGBA8, row 0 = bottom, mirrored. R = now, G = last frame, B = soft (blurred)
+    // moving body parts: { x, y, vx, vy (uv per second), part } for the fluid worlds
+    points: [],
     mask: new Uint8Array(MASK_W * MASK_H * 4),
     maskOn: false, maskDirty: false,
     camMap: [1, 1],
@@ -78,6 +83,10 @@ export function createBody() {
       S.source = 'pointer';
       h.vx = x - h.x; h.vy = y - h.y; h.x = x; h.y = y; h.seen = now;
       h.str = Math.max(h.str, down ? .9 : clamp(.25 + h.speed * .4, 0, 1));
+    }
+    if (lastPt && (S.source === 'pointer' || S.source === 'none')) {
+      const dt = Math.max(.008, (now - lastPt.t) / 1000);
+      S.points = [{ x, y, vx: (x - lastPt.x) / dt, vy: (y - lastPt.y) / dt, part: 0 }];
     }
     lastPt = { x, y, t: now }; pointerT = now;
   }
@@ -235,7 +244,7 @@ export function createBody() {
     res.close?.();
     if (!raw) {
       // nobody in view: let the form fade gently instead of vanishing
-      S.body.presence = lerp(S.body.presence, 0, .05); S.hands.forEach(h => h.str *= .92); prevLm = null;
+      S.body.presence = lerp(S.body.presence, 0, .05); S.hands.forEach(h => h.str *= .92); prevLm = null; S.points = [];
       for (let i = 0; i < cur.length; i++) cur[i] *= .93;
       finishMask(); return;
     }
@@ -255,6 +264,11 @@ export function createBody() {
       let s = 0;
       for (const i of KEY) s += Math.hypot(lm[i].x - prevLm[i].x, lm[i].y - prevLm[i].y);
       rawMotion = Math.max(rawMotion, clamp(s / KEY.length / dt / .7, 0, 1));
+    }
+    S.points = [];
+    if (prevLm) for (const [i, part] of PARTS) {
+      if (lm[i].v < .5) continue;
+      S.points.push({ x: lm[i].x, y: lm[i].y, vx: (lm[i].x - prevLm[i].x) / dt, vy: (lm[i].y - prevLm[i].y) / dt, part });
     }
     prevLm = lm.map(p => ({ x: p.x, y: p.y })); prevLmT = now;
 
@@ -327,6 +341,11 @@ export function createBody() {
 
     for (const h of S.hands) { if (now - h.seen > 600) h.str *= .94; h.speed *= .92; }
     if (S.source === 'pointer' && now - pointerT > 4000) S.body.presence *= .98;
+    if (S.source === 'pointer' && now - pointerT > 60) S.points = [];
+    if (S.source === 'motion') {
+      const h = S.hands[0];
+      S.points = h.str > .2 ? [{ x: h.x, y: h.y, vx: h.vx / Math.max(dt, .016), vy: h.vy / Math.max(dt, .016), part: 0 }] : [];
+    }
     if (S.source !== 'pose') { S.rise *= .98; S.openness *= .98; }
   }
 
