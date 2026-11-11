@@ -9,10 +9,10 @@
 //              bring your hands together to hold the orb · stillness fills you with light
 //   Undertow   lows = glow from the deep · mids = caustic light · highs = bubbles
 //              hands stir currents · stillness brings a shaft of light down onto you
-//   Prism      soft rainbows on a warm wall; in each, 7 colours = 7 frequency bands (red = lows → violet = highs)
-//              raise/lower hands to turn the rainbows · stillness gathers each rainbow into white light
-//   Bloom      petal rings = frequency bands · highs = pollen
-//              rest a hand to plant a flower · stillness opens the bloom and blossoms on you
+//   Prism      crystals throwing rainbows on a warm wall; in each, 7 colours = 7 bands (red = lows → violet = highs)
+//              each crystal grows with its band, turns with the mids · slow hands gather them, quick hands push & spin
+//   Bloom      petal rings = frequency bands · highs = pollen · musical attacks sprout flowers
+//              flowers grow near your hands and along your outline; your hands brush them aside
 
 export const WORLD_FRAG = `#version 300 es
 precision highp float;
@@ -36,8 +36,10 @@ uniform int uSimOn;
 uniform int uMaskOn;
 uniform vec2 uCamMap;
 uniform vec2 uSimTexel;
-uniform vec4 uFlowers[8];  // x, y (uv), growth, hue
+uniform vec4 uFlowers[16];  // x, y (uv), growth, hue
+uniform vec4 uFlowerB[16];  // openness, rotation, size, 0
 uniform int uNFlowers;
+uniform vec4 uRain[6];      // crystals: x, y (uv), angle, scale
 
 float ASP;
 
@@ -72,7 +74,7 @@ vec3 maskAt(vec2 uv){
   if(c.x<0. || c.x>1. || c.y<0. || c.y>1.) return vec3(0.);
   return texture(uMask, c).rgb;
 }
-float body(vec2 uv){ return smoothstep(.22, .55, maskAt(uv).b); }
+float body(vec2 uv){ vec3 m = maskAt(uv); return smoothstep(.3, .62, mix(m.r, m.b, .45)); }
 vec2 bodyGrad(vec2 uv){   // points into the body
   float e = .008;
   return vec2(maskAt(uv+vec2(e,0.)).b - maskAt(uv-vec2(e,0.)).b, maskAt(uv+vec2(0.,e)).b - maskAt(uv-vec2(0.,e)).b);
@@ -121,23 +123,7 @@ vec3 tide(vec2 uv, vec2 p){
     // highs: glints of sun dancing on the surface
     col += vec3(1.,.9,.75)*pow(max(dot(r, sun), 0.), 220.)*(.6 + uAudio.z*2.5);
     col += vec3(1.,.9,.75)*clamp(h, 0., 1.)*.2;
-    // your reflection: a dark, wavering shape, the way a backlit figure reflects
-    vec2 ruv = vec2(uv.x + n.x*.05, 2.*hz - uv.y + n.z*.05);
-    float rb = body(ruv);
-    nearWater = smoothstep(.0,.2,hz-uv.y+.05);
-    col = mix(col, col*.35 + vec3(.04,.035,.06), rb*.65*nearWater);
-    col += vec3(1.,.8,.55)*rimToward(ruv, vec2(sunP.x - p.x, -(sunP.y - p.y)))*rb*.25;
     col = mix(col, skyCol(normalize(vec3(rd.x,.0,1.)), sun), smoothstep(25.,90.,t)*.8);
-  }
-  // you, backlit by the sunrise: a soft dark figure, warm light wrapping your edges
-  float b = body(uv);
-  if(b>0.){
-    float ds = length(p - sunP);
-    vec3 fig = mix(vec3(.07,.06,.10), vec3(.16,.12,.15), smoothstep(.3,-.3,p.y));
-    fig += vec3(1.,.72,.5)*exp(-ds*3.)*.06;                          // a little haze between you and the sun
-    float rim = rimToward(uv, sunP - p);
-    col = mix(col, fig, b*.97);
-    col += vec3(1.,.80,.55)*rim*(.35 + exp(-ds*1.8)*1.1)*(.8 + uMove.y*.4);
   }
   return col;
 }
@@ -218,66 +204,75 @@ vec3 spectral(float t){
   vec3 c = clamp(abs(fract(t + vec3(0.,.666,.333))*6.-3.)-1., 0., 1.);
   return mix(c, vec3(1.), .15);
 }
-float PTILT;
-vec3 rainbowAt(vec2 p){
+// crystals hang in the light; each throws a rainbow. Their positions, spin and
+// size come from a small physics sim (main.js): your hands gather and push them,
+// the music makes them grow and turn.
+vec3 crystals(vec2 p, out float glass){
   vec3 acc = vec3(0.);
-  float spread = mix(1., .08, uMove.y)*(1. + uMove.w*.3);      // stillness: colours gather into one
-  for(int i=0;i<5;i++){
-    float fi = float(i);
-    vec2 c = vec2(sin(uTime*.006*(1.+fi*.3) + fi*2.1)*.55*ASP*.5, sin(uTime*.005*(1.+fi*.2) + fi*1.3)*.32);
-    float ang = .5 + fi*.55 + sin(uTime*.004 + fi)*.25 + PTILT;
+  glass = 0.;
+  float spread = mix(1., .12, uMove.y);                 // stillness: colours gather into one
+  for(int i=0;i<6;i++){
+    vec4 R = uRain[i];
+    vec2 c = toP(R.xy);
+    float ang = R.z, sc = R.w;
     vec2 ax = vec2(cos(ang), sin(ang));
     vec2 d = p - c;
-    float u = dot(d, ax), v = dot(d, vec2(-ax.y, ax.x));
-    float len = (.09 + .03*fi)*spread, wid = .05 + .02*sin(fi*3.);
-    float across = exp(-v*v/(wid*wid))*smoothstep(1.6, .6, abs(u)/max(len,.02));
+    // the crystal: a small soft hexagon of glass
+    // the crystal itself: a faint, softly faceted glint, not an outline
+    vec2 q = abs(mat2(ax.x, -ax.y, ax.y, ax.x)*d);
+    float gem = q.x*.7 + q.y - .012*(.8 + sc*.4);
+    float facet = .5 + .5*sin(atan(d.y, d.x)*3. + ang*2.);
+    glass += smoothstep(.006, -.006, gem)*(.10 + .12*facet);
+    glass += exp(-dot(d,d)/.00004)*.35;
+    // its rainbow, thrown out along its axis
+    vec2 o = c + ax*.012;
+    vec2 e = p - o;
+    float u = dot(e, ax), v = dot(e, vec2(-ax.y, ax.x));
+    float len = (.12 + .06*sc)*spread;
+    float wid = .025 + .02*sc;
+    float across = exp(-v*v/(wid*wid))*smoothstep(-.01, .02, u)*smoothstep(1.25*len, .9*len, u);
+    float hueOff = sin(uTime*.02 + float(i)*1.3)*.06 + uAudio.y*.12;   // mids shift the colours
     vec3 col = vec3(0.);
     for(int k=0;k<7;k++){
-      float pos = (float(k)/6. - .5)*len;
-      float w = exp(-pow((u - pos)/(len*.16 + .006), 2.));
-      col += spectral(float(k)/7.*.78)*w*(.10 + band(k)*1.2);
+      float pos = (float(k)/6.)*len;
+      float w = exp(-pow((u - pos)/(len*.11 + .005), 2.));
+      col += spectral(fract(float(k)/7.*.78 + hueOff))*w*(.10 + band(k)*.75);
     }
-    acc += col*across*(.7 + .3*sin(fi*4.1));
+    acc += col*across;
   }
   return acc;
 }
 vec3 prism(vec2 uv, vec2 p){
-  // a warm plaster wall in early light, with a soft window glow
   vec3 col = mix(vec3(.30,.26,.24), vec3(.44,.39,.35), uv.y);
   col += vec3(.06,.05,.04)*(fbm(p*3.) - .5);
   col += vec3(.10,.08,.05)*exp(-pow(length((p - vec2(.25*ASP*.5, .15))*vec2(.8,1.)), 2.)*4.);
-  // hands tilt the light: the higher they are, the more the rainbows turn
-  float hy = .5, hw = 0.;
-  if(uH0.z>0.){ hy = uH0.y; hw = uH0.z; }
-  if(uH1.z>0.){ hy = hw>0. ? (hy+uH1.y)*.5 : uH1.y; hw = max(hw, uH1.z); }
-  PTILT = (hy-.5)*1.2*min(hw*2., 1.);
-  vec3 light = rainbowAt(p);
-  // you cast a soft shadow, offset as if the sun were behind you, up and to the left
-  float sh = body(uv + vec2(.02, -.025));
-  col *= 1. - sh*.35;
-  light *= 1. - sh*.6;
-  col += light*.9;
-  // and where the light falls on you it shows a little brighter
-  float b = body(uv);
-  if(b>0.){
-    vec3 fig = mix(col, vec3(.20,.17,.16) + light*1.4, .75);
-    col = mix(col, fig, b*.85);
-    col += vec3(1.,.9,.8)*rimToward(uv, vec2(-.6,.8))*.18;
-  }
+  float glass;
+  vec3 light = crystals(p, glass);
+  col += light*.95;
+  col += vec3(1.,.97,.92)*glass*(.5 + uAudio.z*1.2);       // highs: glints in the glass
+  // your hands carry a faint warm light
+  col += vec3(1.,.92,.8)*(glow(p,uH0,.05)+glow(p,uH1,.05))*.12;
   return col;
 }
 
 // ============ 4 · BLOOM ============
-vec3 flower(vec2 p, vec2 c, float grow, float hue, float seed, inout vec3 col){
-  vec2 d = p - c;
-  float s = .045*grow;
+vec3 flower(vec2 p, vec4 f, vec4 fb, inout vec3 col){
+  vec2 d = p - toP(f.xy);
+  float s = .05*f.z*fb.z;
   if(s < .002) return col;
-  float r = length(d), a = atan(d.y, d.x) + sin(uTime*.3 + seed)*.15*(.5 + uAudio.y);
-  float petal = s*(.55 + .45*abs(cos(a*2.5)));
-  vec3 pc = mix(vec3(1.,.74,.70), vec3(1.,.88,.55), hue);
-  float m = smoothstep(petal, petal*.8, r);
-  col = mix(col, pc*(.85 + .15*(1. - r/s)), m*.9);
-  col = mix(col, vec3(1.,.82,.4), smoothstep(s*.22, s*.15, r));
+  float r = length(d);
+  if(r > s*1.6) return col;
+  float a = atan(d.y, d.x) + fb.y;
+  float np = 5. + floor(f.w*3.);
+  float open = fb.x;
+  // petals: length opens with the music, a soft cup when closed
+  float petal = s*mix(.45, 1., open)*(.55 + .45*pow(abs(cos(a*np*.5)), 1.5 - open*.8));
+  vec3 pc = mix(vec3(1.,.72,.68), vec3(1.,.88,.55), f.w);
+  pc = mix(pc, vec3(.86,.70,.95), step(.75, f.w)*.6);
+  float m = smoothstep(petal, petal*.82, r);
+  col = mix(col, col*.75, smoothstep(petal*1.25, petal, r)*.25);           // soft shadow
+  col = mix(col, pc*(.8 + .25*(1. - r/max(petal,.001))), m*.92);
+  col = mix(col, vec3(1.,.83,.42), smoothstep(s*.2, s*.12, r));
   return col;
 }
 vec3 bloom(vec2 uv, vec2 p){
@@ -307,26 +302,10 @@ vec3 bloom(vec2 uv, vec2 p){
   vec2 pc2 = p*28. + vec2(sin(uTime*.1)*2., -uTime*.25);
   float ph = hash(floor(pc2));
   col += vec3(1.,.95,.7)*step(.985, ph)*smoothstep(.3, 0., length(fract(pc2)-.5))*(.25 + uAudio.z*1.4);
-  // flowers you planted
-  for(int i=0;i<8;i++){
+  // flowers that sprouted around you with the music
+  for(int i=0;i<16;i++){
     if(i>=uNFlowers) break;
-    vec4 f = uFlowers[i];
-    col = flower(p, toP(f.xy), f.z, f.w, float(i)*1.7, col);
-  }
-  // you, overgrown: leaves fill your form, blossoms open as you still
-  float b = body(uv);
-  if(b>0.){
-    vec2 lp = p*12.;
-    float leaf = fbm(lp + vec2(0., uTime*.02));
-    vec3 fig = mix(vec3(.13,.31,.19), vec3(.42,.64,.38), leaf)*shade;
-    vec2 cell = floor(lp*.6);
-    vec2 fc = fract(lp*.6) - .5 - (vec2(hash(cell+1.), hash(cell+2.)) - .5)*.5;   // scattered, not gridded
-    float sz = .12 + .14*hash(cell+5.);
-    float bl = step(1. - uMove.y*.6, hash(cell+3.));
-    float pet = smoothstep(sz, sz*.4, length(fc))*(.7+.3*cos(atan(fc.y,fc.x)*5. + hash(cell)*6.));
-    fig = mix(fig, mix(vec3(1.,.78,.72), vec3(1.,.92,.6), hash(cell+9.)), bl*pet*smoothstep(.0,.3,uMove.y));
-    col = mix(col, fig, b*.92);
-    col += vec3(1.,.95,.7)*rimToward(uv, vec2(-.4,.6))*.3;
+    col = flower(p, uFlowers[i], uFlowerB[i], col);
   }
   return col;
 }

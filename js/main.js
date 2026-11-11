@@ -218,20 +218,78 @@ const PHYS = [
   { damp: .975, push: .25, obstacle: .3, iters: 1 },  // bloom: a soft membrane
 ];
 
-// ---------- Bloom: rest a hand somewhere to plant a flower there ----------
-let flowers = [];
-const flowerArr = new Float32Array(32);
-function tendFlowers(dt) {
-  const S = body.state;
-  if (cur === 4) for (const h of S.hands) {
-    if (h.str < .2 || h.stillT < 1.2) continue;
-    const near = flowers.some(f => Math.hypot((f.x - h.x) * W / H, f.y - h.y) < .07);
-    if (!near) { flowers.push({ x: h.x, y: h.y, g: 0, hue: Math.random(), age: 0 }); h.stillT = -2; }
+// ---------- Prism: crystals hanging in the light ----------
+// Slow hands gather crystals toward them; quick hands push and spin them.
+// Each crystal grows with its own frequency band and turns with the mids.
+const crystals = Array.from({ length: 6 }, (_, i) => {
+  const hx = .14 + i * .145, hy = .5 + Math.sin(i * 2.3) * .2;
+  return { hx, hy, x: hx, y: hy, vx: 0, vy: 0, a: i * 1.1, va: 0, sc: .6 };
+});
+const rainArr = new Float32Array(24);
+function stepCrystals(dt, t) {
+  const S = body.state, A = audio.soft, B = audio.bands7, ASP = W / H;
+  const hands = S.hands.filter(h => h.str > .1);
+  crystals.forEach((c, i) => {
+    const tx = c.hx + Math.sin(t * .03 + i * 2) * .07, ty = c.hy + Math.cos(t * .025 + i) * .05;
+    let ax = (tx - c.x) * .25, ay = (ty - c.y) * .25;
+    for (const h of hands) {
+      const dx = (h.x - c.x) * ASP, dy = h.y - c.y, d = Math.hypot(dx, dy) + .04, reach = .4;
+      if (d > reach) continue;
+      const f = (1 - d / reach) * h.str;
+      if (h.speed < .5) { ax += dx / d / ASP * f * .9; ay += dy / d * f * .9; }               // gather
+      else {
+        const m = Math.hypot(h.vx, h.vy) + 1e-6;
+        ax += h.vx / m * h.speed * f * .8; ay += h.vy / m * h.speed * f * .8;      // push
+        c.va += (h.vx * dy - h.vy * dx) * 6 * f;                                              // and spin
+      }
+    }
+    for (const o of crystals) if (o !== c) {
+      const dx = (c.x - o.x) * ASP, dy = c.y - o.y, d = Math.hypot(dx, dy) + .01;
+      if (d < .12) { ax += dx / d * (.12 - d) * 3 / ASP; ay += dy / d * (.12 - d) * 3; }
+    }
+    c.vx = (c.vx + ax * dt) * Math.pow(.25, dt); c.vy = (c.vy + ay * dt) * Math.pow(.25, dt);
+    c.x = clamp(c.x + c.vx * dt, .03, .97); c.y = clamp(c.y + c.vy * dt, .05, .95);
+    c.sc += ((.55 + B[i % 7] * 1.8 + A.level * .3) - c.sc) * .03;                             // grows with its band
+    c.va *= Math.pow(.3, dt);
+    c.a += ((.02 + A.mid * .18) * (i % 2 ? -1 : 1) + c.va) * dt;                               // turns with the mids
+    rainArr.set([c.x, c.y, c.a, c.sc], i * 4);
+  });
+}
+
+// ---------- Bloom: flowers sprout around you in time with the music ----------
+// On a musical attack a flower appears near a hand or along the edge of your body.
+// The music makes them grow and open; your hands brush them aside and they spring back.
+let flowers = [], lastSprout = 0;
+const flowerArr = new Float32Array(64), flowerB = new Float32Array(64);
+function stepGarden(dt, t, live) {
+  const S = body.state, A = audio.soft, B = audio.bands7, O = audio.onsets, ASP = W / H;
+  const hands = S.hands.filter(h => h.str > .1);
+  const cue = live ? (O.mid || O.low) : (t - lastSprout > 4);
+  if (cue && t - lastSprout > .9) {
+    lastSprout = t;
+    let pos = null; const r = Math.random();
+    if (r < .45 && hands.length) { const h = hands[(Math.random() * hands.length) | 0]; pos = [h.x + rand(-.05, .05), h.y + rand(-.05, .05)]; }
+    else if (r < .85) pos = body.edgePoint();
+    if (!pos) pos = [rand(.12, .88), rand(.12, .75)];
+    if (flowers.length >= 16) flowers.shift();
+    flowers.push({ x: clamp(pos[0], .03, .97), y: clamp(pos[1], .05, .95), ox: 0, oy: 0, vx: 0, vy: 0, g: 0, size: rand(.7, 1.3), hue: Math.random(), rot: rand(0, 6.28), open: .2, age: 0, dir: Math.random() < .5 ? -1 : 1 });
   }
-  for (const f of flowers) { f.age += dt; f.g = Math.min(1, f.age / 5) * (f.age > 70 ? Math.max(0, 1 - (f.age - 70) / 10) : 1); }
-  flowers = flowers.filter(f => f.age < 80).slice(-8);
-  flowerArr.fill(0);
-  flowers.forEach((f, i) => flowerArr.set([f.x, f.y, f.g, f.hue], i * 4));
+  flowers.forEach((f, i) => {
+    f.age += dt;
+    const life = f.age > 90 ? Math.max(0, 1 - (f.age - 90) / 8) : 1;
+    f.g = Math.min(1, f.g + dt * (.04 + A.level * .4)) * life;                                    // music grows them
+    f.open += (Math.min(1, .2 + B[1 + (i % 5)] * 1.3 + S.stillness * .3) - f.open) * .04;          // and opens them
+    f.rot += dt * (.02 + A.mid * .12) * f.dir;
+    for (const h of hands) {
+      const dx = (f.x + f.ox - h.x) * ASP, dy = f.y + f.oy - h.y, d = Math.hypot(dx, dy) + .01;
+      if (d < .13) { const k = (1 - d / .13) * Math.min(h.speed, 2) * 3; f.vx += dx / d / ASP * k * dt; f.vy += dy / d * k * dt; }
+    }
+    f.vx += (-f.ox * 9 - f.vx * 3) * dt; f.vy += (-f.oy * 9 - f.vy * 3) * dt;                   // spring back
+    f.ox += f.vx * dt; f.oy += f.vy * dt;
+    flowerArr.set([f.x + f.ox, f.y + f.oy, f.g, f.hue], i * 4);
+    flowerB.set([f.open, f.rot, f.size, 0], i * 4);
+  });
+  flowers = flowers.filter(f => f.age < 98);
 }
 
 // ---------- loop ----------
@@ -274,8 +332,10 @@ function frame(now) {
   const SA = audio.soft;
   gl.uniform4f(U.uAudio, SA.bass, SA.mid, SA.high, SA.level);
   gl.uniform1fv(U.uBands7, audio.bands7);
-  tendFlowers(dt);
-  gl.uniform4fv(U.uFlowers, flowerArr); gl.uniform1i(U.uNFlowers, flowers.length);
+  if (cur === 3 || prev === 3) stepCrystals(dt, t);
+  if (cur === 4 || prev === 4) stepGarden(dt, t, live);
+  gl.uniform4fv(U.uRain, rainArr);
+  gl.uniform4fv(U.uFlowers, flowerArr); gl.uniform4fv(U.uFlowerB, flowerB); gl.uniform1i(U.uNFlowers, flowers.length);
   const h0 = S.hands[0], h1 = S.hands[1];
   gl.uniform3f(U.uH0, h0.x, h0.y, h0.str > .03 ? h0.str : 0);
   gl.uniform3f(U.uH1, h1.x, h1.y, h1.str > .03 ? h1.str : 0);

@@ -48,7 +48,7 @@ export function createBody() {
   };
   const cur = new Float32Array(MASK_W * MASK_H), soft = new Float32Array(MASK_W * MASK_H), tmp = new Float32Array(MASK_W * MASK_H);
 
-  const filt = Array.from({ length: 34 }, () => [oneEuro(), oneEuro(), oneEuro(1, 0)]);
+  const filt = Array.from({ length: 34 }, () => [oneEuro(1.4, 1.2), oneEuro(1.4, 1.2), oneEuro(1, 0)]);
   const sk = document.createElement('canvas'); sk.width = MASK_W; sk.height = MASK_H;
   const skx = sk.getContext('2d', { willReadFrequently: true });
   let video = null, landmarker = null, lastVideoT = -1, prevLm = null, prevLmT = 0;
@@ -98,7 +98,7 @@ export function createBody() {
     try {
       const { FilesetResolver, PoseLandmarker } = await import(MP_URL);
       const files = await FilesetResolver.forVisionTasks(MP_WASM);
-      const opts = d => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate: d }, runningMode: 'VIDEO', numPoses: 1, outputSegmentationMasks: false });
+      const opts = d => ({ baseOptions: { modelAssetPath: MP_MODEL, delegate: d }, runningMode: 'VIDEO', numPoses: 1, outputSegmentationMasks: true });
       try { landmarker = await PoseLandmarker.createFromOptions(files, opts('GPU')); }
       catch { landmarker = await PoseLandmarker.createFromOptions(files, opts('CPU')); }
       S.source = 'pose';
@@ -124,9 +124,35 @@ export function createBody() {
     }
     finishMask();
   }
+  function ingestSeg(src, sw, sh) {
+    for (let y = 0; y < MASK_H; y++) {
+      const fy = clamp((MASK_H - 1 - y + .5) / MASK_H * sh - .5, 0, sh - 1), y0 = fy | 0, y1 = Math.min(sh - 1, y0 + 1), ty = fy - y0;
+      for (let x = 0; x < MASK_W; x++) {
+        const fx = clamp((MASK_W - 1 - x + .5) / MASK_W * sw - .5, 0, sw - 1), x0 = fx | 0, x1 = Math.min(sw - 1, x0 + 1), tx = fx - x0;
+        let v = lerp(lerp(src[y0 * sw + x0], src[y0 * sw + x1], tx), lerp(src[y1 * sw + x0], src[y1 * sw + x1], tx), ty);
+        v = clamp((v - .25) / .5, 0, 1);                 // ignore faint, flickery guesses
+        const i = y * MASK_W + x;
+        // grow quickly (responsive), shrink a little slower (no flicker)
+        cur[i] = lerp(cur[i], v, v > cur[i] ? .55 : .3);
+      }
+    }
+    finishMask();
+  }
+  // a random point on the edge of your silhouette, in screen uv (for things to grow around you)
+  function edgePoint() {
+    if (!S.maskOn) return null;
+    for (let k = 0; k < 60; k++) {
+      const x = (Math.random() * MASK_W) | 0, y = (Math.random() * MASK_H) | 0, v = soft[y * MASK_W + x];
+      if (v > .25 && v < .6) {
+        const cx = (x + .5) / MASK_W, cy = (y + .5) / MASK_H;
+        return [(cx - .5) / S.camMap[0] + .5, (cy - .5) / S.camMap[1] + .5];
+      }
+    }
+    return null;
+  }
   function finishMask() {
     // soft copy: two box-blur passes (horizontal then vertical), radius 4
-    const R = 5;
+    const R = 3;
     for (let y = 0; y < MASK_H; y++) {
       let s = 0; const row = y * MASK_W;
       for (let x = -R; x <= R; x++) s += cur[row + clamp(x, 0, MASK_W - 1)];
@@ -203,6 +229,9 @@ export function createBody() {
     lastVideoT = video.currentTime;
     const res = landmarker.detectForVideo(video, now);
     const raw = res.landmarks && res.landmarks[0];
+    const mk = res.segmentationMasks && res.segmentationMasks[0];
+    let segData = null, segW = 0, segH = 0;
+    if (raw && mk) { segData = mk.getAsFloat32Array(); segW = mk.width; segH = mk.height; }
     res.close?.();
     if (!raw) {
       // nobody in view: let the form fade gently instead of vanishing
@@ -217,7 +246,9 @@ export function createBody() {
       return { x: f[0](sx, ts), y: f[1](sy, ts), v: f[2](p.visibility ?? 1, ts) };
     });
     lm[33] = { x: (lm[11].x + lm[12].x) / 2, y: (lm[11].y + lm[12].y) / 2, v: Math.min(lm[11].v, lm[12].v) };
-    drawForm(lm);
+    // your silhouette: the camera's own cut-out (responsive), lightly steadied;
+    // the skeleton form is only a fallback if segmentation isn't available
+    if (segData) ingestSeg(segData, segW, segH); else drawForm(lm);
     const P = i => lm[i];
     const dt = prevLm ? Math.max(.016, (now - prevLmT) / 1000) : 0;
     if (prevLm) {
@@ -300,5 +331,5 @@ export function createBody() {
   }
 
   // testForm: draw the form from given landmarks (screen space), for testing without a camera
-  return { state: S, update, startCamera, testForm: lm => { S.maskOn = true; drawForm(lm); }, get video() { return video; } };
+  return { state: S, update, startCamera, edgePoint, testForm: lm => { S.maskOn = true; drawForm(lm); }, get video() { return video; } };
 }

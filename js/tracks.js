@@ -7,11 +7,11 @@
 // tuned by ear: move a word to another world, or add exact track titles.
 
 export const WORLDS = [
-  { id: 'tide',      name: 'Tide',      sub: 'dawn · horizon · breath',   hint: 'raise your arms to lift the sun · be still and the sea turns to glass' },
+  { id: 'tide',      name: 'Tide',      sub: 'dawn · horizon · breath',   hint: 'raise your arms to lift the sun · sweep your hands across the water' },
   { id: 'lightwell', name: 'Lightwell', sub: 'beam · gather · glow',      hint: 'bring your hands together to hold the light · be still to fill with it' },
   { id: 'undertow',  name: 'Undertow',  sub: 'depth · pull · surrender',  hint: 'move your hands to stir the water · be still and light finds you' },
-  { id: 'prism',     name: 'Prism',     sub: 'light · colour · return',   hint: 'raise or lower your hands to turn the rainbows · be still and the colours become one' },
-  { id: 'bloom',     name: 'Bloom',     sub: 'garden · unfold · return',  hint: 'rest a hand to plant a flower · be still and you blossom' },
+  { id: 'prism',     name: 'Prism',     sub: 'light · colour · return',   hint: 'hold your hands slowly to gather the crystals · sweep them to spin them away' },
+  { id: 'bloom',     name: 'Bloom',     sub: 'garden · unfold · return',  hint: 'flowers sprout around you with the music · brush them with your hands' },
 ];
 
 export const TRACK_RULES = {
