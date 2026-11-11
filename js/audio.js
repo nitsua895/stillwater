@@ -1,37 +1,46 @@
-// Audio in: local album files (best: clean signal + track names) or the mic
-// (for Spotify / speakers in the room). Produces smoothed bands, a soft beat,
-// and a slow "mood" (energy + brightness) used by Auto mode.
+// Audio in: album files (clean signal) or the mic (Spotify / speakers in the room).
+// Produces:
+//   lv        smoothed bass / mid / high / level, a soft beat
+//   spectrum  64 log-spaced bands (40 Hz - 12 kHz), 0..1, as bytes for the GPU
+//   onsets    sudden rises per band group (attacks: plucks, hits, swells), these make waves
+//   mood      slow energy + brightness, used by Auto mode
 
 const lerp = (a, b, k) => a + (b - a) * k;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+export const BANDS = 64;
 
 export function createAudio() {
   let ctx = null, analyser = null, freq = null, el = null, mode = 'idle';
   const lv = { bass: 0, mid: 0, high: 0, level: 0, beat: 0, centroid: .3 };
   const mood = { energy: .3, brightness: .3 };
-  let bassAvg = .3;
+  const spectrum = new Uint8Array(BANDS * 4);       // RGBA texture row
+  const bands = new Float32Array(BANDS), prevBands = new Float32Array(BANDS);
+  const onsets = { low: 0, mid: 0, high: 0 };
+  let edges = null, bassAvg = .3, gain = 1;
+  const lastHit = { low: 0, mid: 0, high: 0 };
+  // an attack only counts if it clears a threshold, and each band rests briefly after firing
+  const pick = (k, flux, thr, scale, t) => {
+    if (flux < thr || t - lastHit[k] < .14) return 0;
+    lastHit[k] = t; return clamp((flux - thr) * scale, .15, 1);
+  };
 
   function ensure() {
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       analyser = ctx.createAnalyser();
-      analyser.fftSize = 2048; analyser.smoothingTimeConstant = .8;
+      analyser.fftSize = 2048; analyser.smoothingTimeConstant = .7;
       freq = new Uint8Array(analyser.frequencyBinCount);
+      const hz = ctx.sampleRate / analyser.fftSize;
+      edges = Array.from({ length: BANDS + 1 }, (_, i) => Math.max(1, Math.round(40 * Math.pow(12000 / 40, i / BANDS) / hz)));
     }
     if (ctx.state === 'suspended') ctx.resume();
   }
-
   function element() {
     ensure();
-    if (!el) {
-      el = new Audio();
-      const src = ctx.createMediaElementSource(el);
-      src.connect(analyser); src.connect(ctx.destination);
-    }
+    if (!el) { el = new Audio(); const src = ctx.createMediaElementSource(el); src.connect(analyser); src.connect(ctx.destination); }
     mode = 'file';
     return el;
   }
-
   async function startMic() {
     ensure();
     const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -39,39 +48,49 @@ export function createAudio() {
     mode = 'mic';
   }
 
-  // average of bins between two frequencies (Hz)
-  function band(f0, f1) {
-    const hz = ctx.sampleRate / analyser.fftSize;
-    const a = Math.max(1, Math.round(f0 / hz)), b = Math.max(a + 1, Math.round(f1 / hz));
-    let s = 0; for (let i = a; i < b; i++) s += freq[i];
-    return s / (b - a) / 255;
-  }
-
   function update(t) {
     const live = analyser && (mode === 'mic' || (mode === 'file' && el && !el.paused));
-    let b, m, h, c;
     if (live) {
       analyser.getByteFrequencyData(freq);
-      b = band(30, 160); m = band(160, 2000); h = band(2000, 9000);
-      let num = 0, den = 0;
-      for (let i = 2; i < freq.length; i++) { num += i * freq[i]; den += freq[i]; }
-      c = den ? num / den / freq.length : 0;
-      if (mode === 'mic') { b *= 1.5; m *= 1.8; h *= 2.4; }
+      let peak = 0;
+      for (let b = 0; b < BANDS; b++) {
+        const a = edges[b], z = Math.max(a + 1, edges[b + 1]);
+        let s = 0; for (let i = a; i < z; i++) s += freq[i];
+        // gentle tilt so highs aren't drowned by the lows
+        const v = s / (z - a) / 255 * (1 + b / BANDS * .8);
+        bands[b] = v; peak = Math.max(peak, v);
+      }
+      // slow auto-gain: quiet rooms (mic) and loud files both fill the range
+      gain = lerp(gain, clamp(.75 / Math.max(peak, .05), .8, mode === 'mic' ? 4 : 1.6), .01);
     } else {
-      // gentle breathing when nothing is playing
-      b = .28 + .12 * Math.sin(t * .5); m = .25 + .08 * Math.sin(t * .31 + 1); h = .15 + .06 * Math.sin(t * 1.1); c = .25;
+      // breathing when nothing's playing
+      for (let b = 0; b < BANDS; b++) bands[b] = .18 + .12 * Math.sin(t * (.4 + b * .013) + b * .5) * (1 - b / BANDS * .6);
+      gain = 1;
     }
-    lv.bass = lerp(lv.bass, clamp(b, 0, 1), .14);
-    lv.mid = lerp(lv.mid, clamp(m, 0, 1), .1);
-    lv.high = lerp(lv.high, clamp(h, 0, 1), .16);
-    lv.level = lerp(lv.level, clamp((b + m + h) / 2, 0, 1), .06);
-    lv.centroid = lerp(lv.centroid, c, .05);
+    let lo = 0, mi = 0, hi = 0, oLo = 0, oMi = 0, oHi = 0;
+    for (let b = 0; b < BANDS; b++) {
+      const v = clamp(bands[b] * gain, 0, 1);
+      const flux = Math.max(0, v - prevBands[b]);
+      prevBands[b] = lerp(prevBands[b], v, .5);
+      spectrum[b * 4] = lerp(spectrum[b * 4], v * 255, v * 255 > spectrum[b * 4] ? .6 : .15);
+      spectrum[b * 4 + 3] = 255;
+      if (b < 14) { lo += v; oLo += flux; } else if (b < 40) { mi += v; oMi += flux; } else { hi += v; oHi += flux; }
+    }
+    lo /= 14; mi /= 26; hi /= 24;
+    onsets.low = live ? pick('low', oLo / 14, .045, 8, t) : 0;
+    onsets.mid = live ? pick('mid', oMi / 26, .035, 10, t) : 0;
+    onsets.high = live ? pick('high', oHi / 24, .03, 12, t) : 0;
+    lv.bass = lerp(lv.bass, lo, .14); lv.mid = lerp(lv.mid, mi, .1); lv.high = lerp(lv.high, hi, .16);
+    lv.level = lerp(lv.level, clamp((lo + mi + hi) / 1.8, 0, 1), .06);
+    let num = 0, den = 0;
+    for (let b = 0; b < BANDS; b++) { num += b * spectrum[b * 4]; den += spectrum[b * 4]; }
+    lv.centroid = lerp(lv.centroid, den ? num / den / BANDS : .3, .05);
     bassAvg = lerp(bassAvg, lv.bass, .015);
     lv.beat = lerp(lv.beat, clamp((lv.bass - bassAvg - .035) * 6, 0, 1), .35);
     mood.energy = lerp(mood.energy, lv.level, .004);
-    mood.brightness = lerp(mood.brightness, clamp(lv.centroid * 4, 0, 1), .004);
+    mood.brightness = lerp(mood.brightness, clamp(lv.centroid * 2.2, 0, 1), .004);
     return live;
   }
 
-  return { lv, mood, update, element, startMic, ensure, get mode() { return mode; }, get el() { return el; } };
+  return { lv, mood, spectrum, onsets, update, element, startMic, ensure, get mode() { return mode; }, get el() { return el; } };
 }

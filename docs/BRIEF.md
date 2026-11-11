@@ -49,9 +49,10 @@ camera at all, the mouse or a finger acts as one hand.
 - **Later:** true song recognition (audio fingerprinting, or reading Spotify's now-playing through its API).
 
 ## Roadmap
-1. **MVP (this version):** five worlds, pose tracking, stillness reward, album-file mapping, Auto mood, deployed on Netlify.
+1. **v2 (this version):** GPU wave physics driven by the spectrum and attacks, a full-body silhouette drawn per world, Spotify now-playing.
+1. **MVP:** five worlds, pose tracking, stillness reward, album-file mapping, Auto mood, deployed on Netlify.
 2. **Tune by ear:** listen through the album and refine `TRACK_RULES` plus per-world colours and speeds (see `docs/SOUNDTRACK.md`).
-3. **Spotify now-playing:** a Netlify Function for OAuth, then poll the current track and pick its world automatically.
+3. ~~**Spotify now-playing**~~ done (browser-only PKCE, polled every 3 s). Spotify's API gives track info, not audio, so the mic provides the sound.
 4. **Room lights:** a small local bridge reads `?lights=ws://localhost:8765` and drives Hue, WLED or Nanoleaf. The colour and brightness stream already exists (`js/lights.js`).
 5. **More bodies and depth:** multi-person tracking, segmentation silhouettes, or a Kinect/depth camera.
 6. **Session flow:** an optional guided arc (arrive, flow, peak, stillness, return) across a full album play-through.

@@ -5,7 +5,9 @@ projector or big screen, listens to the music and follows your body through the 
 
 - **Five original worlds:** Tide, Lightwell, Undertow, Prism, Bloom. Each crossfades into the next.
 - **Body:** MediaPipe Pose tracks both hands and your torso. Hands shed light, raised arms brighten the world, and **holding still for ~7 s blooms the world** and sends a ring of light out from you.
-- **Music:** load the album files (each track title picks its world), or use the mic for Spotify through speakers. *Auto* lets the sound choose the world.
+- **Physics:** a real-time wave simulation on the GPU. Music feeds it: sustained lows make swells, and attacks (plucks, hits) drop ripples that travel and interfere. Your hands and your moving body push it too, and in the water worlds waves reflect off your silhouette. Each world lights the surface in 3D.
+- **You in the world:** the camera's full-body silhouette is drawn by each world. You're a dusk figure with a sunlit rim and a reflection in the sea, a shape lit by the beam that fills with light as you still, a diver in caustic light, a stained-glass window, or overgrown with leaves and blossoms.
+- **Music:** connect **Spotify** so the world follows the song that's playing (title → world), and use the **mic** so the physics hears the sound. Spotify never gives apps the audio itself. You can also load album files. *Auto* lets the sound choose when a title doesn't match.
 - **Lights (groundwork):** publishes a live colour and brightness for a future Hue / WLED bridge.
 
 See [`docs/BRIEF.md`](docs/BRIEF.md) for the project brief and
@@ -24,6 +26,7 @@ The camera and mic only work on HTTPS or localhost.
 | `1`–`5` | switch world |
 | `A` | Auto (music picks the world) |
 | `C` | camera on |
+| `M` | mic on |
 | `P` | small mirror preview of the camera |
 | `D` | debug readout (motion, stillness, audio) |
 | `Q` | render quality (low / medium / high) |
@@ -31,8 +34,11 @@ The camera and mic only work on HTTPS or localhost.
 | `Space` / `←` `→` | play/pause · previous/next track |
 
 ## Code map
-- `js/main.js`: WebGL setup, UI, main loop
+- `js/main.js`: UI, main loop, and how sound, hands and body feed the physics (`sources()`, `PHYS`)
+- `js/sim.js`: GPU wave-equation simulation
 - `js/shader.js`: the five worlds (one fragment shader)
+- `js/spotify.js`: Spotify now-playing (browser-only PKCE sign-in)
+- `js/gl.js`: WebGL2 helpers
 - `js/body.js`: pose tracking, motion fallback, stillness and reward logic
 - `js/audio.js`: file and mic analysis, beat, mood
 - `js/particles.js`: light shed from the hands
