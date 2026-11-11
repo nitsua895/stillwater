@@ -34,6 +34,17 @@
   #debug{position:fixed;top:16px;left:16px;font:11px/1.5 ui-monospace,monospace;white-space:pre;background:rgba(0,0,0,.45);padding:8px 10px;border-radius:8px;display:none;pointer-events:none}
   #debug.show{display:block}
   input[type=file]{display:none}
+  #np{position:fixed;top:18px;right:18px;font:300 12px Inter,sans-serif;letter-spacing:.04em;opacity:.7;text-shadow:0 1px 8px rgba(0,0,0,.5);max-width:60vw;text-align:right;pointer-events:none}
+  #sp-panel{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(5,6,14,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:16px;z-index:5}
+  #sp-panel.show{display:flex}
+  #sp-panel .card{max-width:440px;width:100%;background:rgba(20,22,38,.92);border:1px solid rgba(255,255,255,.18);border-radius:16px;padding:20px 22px;font:300 14px/1.55 Inter,sans-serif}
+  #sp-panel h2{font:italic 400 26px 'Cormorant Garamond',Georgia,serif;margin:0 0 8px}
+  #sp-panel ol{padding-left:20px;margin:8px 0 14px}
+  #sp-panel code{font:12px ui-monospace,monospace;background:rgba(255,255,255,.1);padding:2px 6px;border-radius:6px;word-break:break-all}
+  #sp-panel input{width:100%;box-sizing:border-box;font:14px ui-monospace,monospace;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.3);color:#fff;margin:6px 0}
+  #sp-panel .row{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+  #sp-err{color:#ffb4a8;font-size:12px;min-height:16px}
+  #sp-panel a{color:#bfe3e6}
   @media (max-width:600px){ #title{font-size:26px} button,label.btn{padding:7px 11px;font-size:12px} .sep{display:none} }
 </style>
 </head>
@@ -43,12 +54,29 @@
 <video id="preview" muted playsinline></video>
 <div id="title"></div>
 <pre id="debug"></pre>
+<div id="np"></div>
+<div id="sp-panel">
+  <div class="card">
+    <h2>Connect Spotify</h2>
+    Spotify tells Stillwater which song is playing, so the world can follow it. The mic still does the listening. One-time setup (works from a phone):
+    <ol>
+      <li>Open <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> and tap <b>Create app</b>.</li>
+      <li>Any name. Redirect URI: <code id="sp-redirect"></code> <button id="sp-copy" style="padding:3px 9px;font-size:11px">Copy</button></li>
+      <li>Tick <b>Web API</b>, save, then copy the <b>Client ID</b> here:</li>
+    </ol>
+    <input id="sp-id" placeholder="Client ID" autocomplete="off" spellcheck="false">
+    <div id="sp-err"></div>
+    <div class="row"><button id="sp-close">Cancel</button><button id="sp-go" class="on">Connect</button></div>
+  </div>
+</div>
 <div id="ui">
   <div id="worlds"></div>
   <span class="sep"></span>
   <button id="auto">Auto</button>
   <label class="btn">Load album<input id="file" type="file" accept="audio/*" multiple></label>
+  <button id="sp">Spotify</button>
   <button id="mic">Listen (mic)</button>
+  <button id="tab" style="display:none" title="Capture a browser tab's or the system's sound (desktop browsers)">Tab audio</button>
   <button id="cam">Camera</button>
   <button id="fs">Fullscreen</button>
   <div id="status">Turn on the camera and raise your hands. Hold still to gather light, move to scatter it.</div>
